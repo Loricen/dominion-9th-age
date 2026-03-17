@@ -39,6 +39,7 @@ coverage
 *.timestamp-*-*.mjs
 
 # wp files
+/index.php
 wp-*.php
 /wp-admin/
 /wp-includes/
