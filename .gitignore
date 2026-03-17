@@ -44,7 +44,8 @@ wp-*.php
 /wp-admin/
 /wp-includes/
 /wp-content/languages/
-/wp-content/*
+/wp-content/*/*
+/wp-content/index.php
 
 # except the module
 !/wp-content/plugins/hexcommand
