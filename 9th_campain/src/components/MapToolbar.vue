@@ -10,7 +10,10 @@ const props = defineProps<{
   isAdvancedPlayer: boolean
   canEdit: boolean
   canFinish: boolean
+  canStart: boolean
   canEnd: boolean
+  canNextTurn: boolean
+  hexturn: number
   mapStatus: { label: string; cls: string } | null
   mapLoaded: boolean
 }>()
@@ -21,6 +24,7 @@ const emit = defineEmits<{
   downloadMap: []
   saveToServer: []
   finishMap: []
+  startGame: []
   endGame: []
   zoomIn: []
   zoomOut: []
@@ -29,6 +33,7 @@ const emit = defineEmits<{
   loadImage: [file: File]
   sizeChange: [size: MapSizeKey]
   refreshMap: []
+  nextTurn: []
 }>()
 
 const jsonFileInput  = ref<HTMLInputElement | null>(null)
@@ -93,6 +98,12 @@ function submitUidLoad() {
       </button>
 
       <!-- End Game — owner, finished, not yet ended -->
+      <button v-if="canStart" class="btn-start" @click="emit('startGame')">
+        ⚔️ Start Game
+      </button>
+      <button v-if="canNextTurn" class="btn-nextturn" @click="emit('nextTurn')" :title="`Current turn: ${hexturn}`">
+        ⏭ Next Turn <span class="turn-badge">{{ hexturn }}</span>
+      </button>
       <button v-if="canEnd" class="btn-end" @click="emit('endGame')">
         💀 End Game
       </button>

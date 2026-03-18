@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useHexMap } from '@/composables/useHexMap'
 import { useMapIO } from '@/composables/useMapIO'
 import type { MapPlayer } from '@/composables/useMapIO'
 import { useMapView } from '@/composables/useMapView'
+import { useSound } from '@/composables/useSound'
 import type { MapSizeKey, TerrainType } from '@/composables/useHexMap'
 import type { ProceduralSettings } from '@/composables/useProceduralGen'
 import MapToolbar from './MapToolbar.vue'
@@ -26,12 +27,24 @@ const {
 const {
   saveMsg, imageLoaded,
   showUidModal, lastHexmapUid, uidCopied,
-  userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups,
+  userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
   showMsg, checkAuth, downloadMap, saveToServer,
-  loadFromServer, deleteFromServer, finishMap, endMap,
+  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, claimTile,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard,
 } = useMapIO()
+
+const { playTileClick, playTileCapture, playActionsReload, playJoinRequest, playGameStarts } = useSound()
+
+// Play sound when new join requests arrive (owner only)
+watch(() => joinRequests.value.length, (newLen, oldLen) => {
+  if (newLen > oldLen) playJoinRequest()
+})
+
+// Play sound for everyone when game starts
+watch(() => loadedMapStatus.value?.mapStatus, (newStatus, oldStatus) => {
+  if (newStatus === 'started' && oldStatus !== 'started') playGameStarts()
+})
 
 const {
   zoom, panX, panY,
@@ -54,6 +67,14 @@ const canFinish = computed(() =>
   loadedMapStatus.value.mapStatus === 'created'
 )
 
+const canStart = computed(() => {
+  if (!loadedMapStatus.value?.is_owner) return false
+  if (loadedMapStatus.value.mapStatus !== 'ongoing') return false
+  const players = loadedMapStatus.value.players
+  if (players.length <= 1) return false  // need at least one other player
+  return players.every(p => allPlayerSetups.value.some(s => s.user_id === p.user_id))
+})
+
 const canEnd = computed(() =>
   isAdvancedPlayer.value &&
   loadedMapStatus.value !== null &&
@@ -61,8 +82,19 @@ const canEnd = computed(() =>
   (loadedMapStatus.value.mapStatus === 'ongoing' || loadedMapStatus.value.mapStatus === 'started')
 )
 
+const canNextTurn = computed(() =>
+  isAdvancedPlayer.value &&
+  loadedMapStatus.value !== null &&
+  loadedMapStatus.value.is_owner &&
+  loadedMapStatus.value.mapStatus === 'started'
+)
+
 const showRightBar = computed(() =>
   loadedMapStatus.value?.mapStatus === 'ongoing' || loadedMapStatus.value?.mapStatus === 'started'
+)
+
+const setupLocked = computed(() =>
+  loadedMapStatus.value?.mapStatus === 'started' || loadedMapStatus.value?.mapStatus === 'ended'
 )
 
 // Join banner: map is ongoing (validated), not owner, not linked/pending
@@ -92,9 +124,20 @@ const loadedMapName     = ref('')
 const showSaveModal     = ref(false)
 const pendingDeleteUid  = ref<string | null>(null)
 const showFinishConfirm = ref(false)
+const showStartConfirm  = ref(false)
+const showNextTurnConfirm = ref(false)
 const showEndConfirm    = ref(false)
 
 const isSelectingCity = ref(false)
+const isClaiming      = ref(false)
+// Current user's full setup (with actions) from allPlayerSetups
+const mySetup = computed(() => {
+  if (!playerSetup.value) return null
+  const found = allPlayerSetups.value.find(s =>
+    s.city_q === playerSetup.value!.city_q && s.city_r === playerSetup.value!.city_r
+  )
+  return found ? { ...found } : null
+})
 const playerBorderColor = ref<string | null>(null)
 
 // --- Handlers ---
@@ -140,6 +183,13 @@ async function confirmDelete() {
   pendingDeleteUid.value = null
 }
 
+async function confirmStart() {
+  if (!loadedMapStatus.value) return
+  try { await startMap(loadedMapStatus.value.uid) }
+  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error starting game') }
+  showStartConfirm.value = false
+}
+
 async function confirmFinish() {
   if (!loadedMapStatus.value) return
   try { await finishMap(loadedMapStatus.value.uid) }
@@ -179,8 +229,20 @@ async function handleConfirmSave(name: string) {
 
 function handleClickHex(e: { q: number; r: number }) {
   if (isSelectingCity.value) { selectHex(e.q, e.r); return }
+  if (isClaiming.value) { handleClaimTile(e.q, e.r); return }
   if (!canEdit.value) return
+  playTileClick()
   onClickHex(e.q, e.r)
+}
+
+async function handleClaimTile(q: number, r: number) {
+  if (!loadedMapStatus.value) return
+  const hex = hexes.value.find(h => h.q === q && h.r === r)
+  if (hex?.terrain === 'water') { showMsg('Water tiles cannot be claimed'); return }
+  try {
+    await claimTile(loadedMapStatus.value.uid, q, r)
+    playTileCapture()
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot claim tile') }
 }
 
 function handleHoverHex(e: { e: MouseEvent; q: number; r: number }) {
@@ -194,6 +256,15 @@ async function handleSaveSetup(setup: import('@/composables/useMapIO').PlayerSet
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error saving setup') }
 }
 
+async function confirmNextTurn() {
+  if (!loadedMapStatus.value) return
+  try {
+    await nextTurn(loadedMapStatus.value.uid)
+    playActionsReload()
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
+  showNextTurnConfirm.value = false
+}
+
 async function handleRefreshMap() {
   if (!loadedMapStatus.value) return
   try { await refreshPlayers() }
@@ -202,8 +273,10 @@ async function handleRefreshMap() {
 
 async function handleJoinMap() {
   if (!loadedMapStatus.value) return
-  try { await requestJoinMap(loadedMapStatus.value.uid) }
-  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error sending request') }
+  try {
+    await requestJoinMap(loadedMapStatus.value.uid)
+    playJoinRequest()
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error sending request') }
 }
 
 async function handleApprove(map_uid: string, user_id: number) {
@@ -233,7 +306,10 @@ onMounted(async () => {
       :is-advanced-player="isAdvancedPlayer"
       :can-edit="canEdit"
       :can-finish="canFinish"
+      :can-start="canStart"
       :can-end="canEnd"
+      :can-next-turn="canNextTurn"
+      :hexturn="loadedMapStatus?.hexturn ?? 0"
       :map-status="mapStatus"
       :map-loaded="loadedMapStatus !== null"
       @regenerate="buildMapRandom"
@@ -247,6 +323,8 @@ onMounted(async () => {
       @load-image="handleLoadImage"
       @size-change="handleSizeChange"
       @finish-map="showFinishConfirm = true"
+      @start-game="showStartConfirm = true"
+      @next-turn="showNextTurnConfirm = true"
       @end-game="showEndConfirm = true"
       @refresh-map="handleRefreshMap"
     />
@@ -287,6 +365,8 @@ onMounted(async () => {
           :pan-y="panY"
           :selected-border-color="playerBorderColor ?? '#FFD700'"
           :player-setups="allPlayerSetups"
+          :owned-tiles="ownedTiles"
+          :claiming-mode="isClaiming"
           @click-hex="handleClickHex"
           @hover-hex="handleHoverHex"
           @wheel="onWheel"
@@ -305,12 +385,16 @@ onMounted(async () => {
       <MapRightBar
         v-if="showRightBar"
         :map-status="loadedMapStatus?.mapStatus ?? ''"
+        :setup-locked="setupLocked"
         :selected-hex="isSelectingCity ? (selectedQ !== null && selectedR !== null ? { q: selectedQ, r: selectedR } : null) : null"
-        :existing-setup="playerSetup"
+        :existing-setup="mySetup"
         :is-selecting-city="isSelectingCity"
+        :all-player-setups="allPlayerSetups"
+        :is-claiming="isClaiming"
         @save-setup="handleSaveSetup"
         @start-city-select="isSelectingCity = true"
         @cancel-city-select="isSelectingCity = false"
+        @toggle-claim="isClaiming = !isClaiming"
         @color-change="playerBorderColor = $event"
       />
     </div>
@@ -352,6 +436,30 @@ onMounted(async () => {
         <div class="confirm-actions">
           <button class="btn-confirm" @click="confirmFinish">✅ Validate</button>
           <button class="btn-cancel" @click="showFinishConfirm = false">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Start game confirm -->
+    <div v-if="showStartConfirm" class="modal-overlay" @click.self="showStartConfirm = false">
+      <div class="confirm-modal">
+        <p>Start the game for <strong>{{ loadedMapName }}</strong>?</p>
+        <p class="confirm-hint">All players have chosen their starting city. This cannot be undone.</p>
+        <div class="confirm-actions">
+          <button class="btn-confirm" @click="confirmStart">⚔️ Start Game</button>
+          <button class="btn-cancel" @click="showStartConfirm = false">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Next turn confirm -->
+    <div v-if="showNextTurnConfirm" class="modal-overlay" @click.self="showNextTurnConfirm = false">
+      <div class="confirm-modal">
+        <p>Advance to turn <strong>{{ (loadedMapStatus?.hexturn ?? 0) + 1 }}</strong>?</p>
+        <p class="confirm-hint">All player actions will be reset to 10.</p>
+        <div class="confirm-actions">
+          <button class="btn-confirm" @click="confirmNextTurn">⏭ Next Turn</button>
+          <button class="btn-cancel" @click="showNextTurnConfirm = false">Cancel</button>
         </div>
       </div>
     </div>

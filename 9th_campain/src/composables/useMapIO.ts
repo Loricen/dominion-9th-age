@@ -3,6 +3,7 @@ import type { Hex, MapSizeKey } from './useHexMap'
 
 export interface MapSave {
   version: number
+  hexturn?: number
   cols: number
   rows: number
   size: MapSizeKey
@@ -39,8 +40,15 @@ export interface MapPlayer {
   is_owner: boolean
 }
 
+export interface OwnedTile {
+  q: number
+  r: number
+  user_id: number
+}
+
 export interface PlayerSetupWithId extends PlayerSetup {
   user_id: number
+  actions: number
 }
 
 export interface PlayerSetup {
@@ -78,6 +86,7 @@ export function useMapIO() {
   const joinRequests    = ref<JoinRequest[]>([])
   const playerSetup     = ref<PlayerSetup | null>(null)
   const allPlayerSetups = ref<PlayerSetupWithId[]>([])
+  const ownedTiles      = ref<OwnedTile[]>([])
 
   const loadedMapStatus = ref<{
     uid: string
@@ -85,6 +94,7 @@ export function useMapIO() {
     is_linked: boolean
     is_pending: boolean
     mapStatus?: string
+    hexturn: number
     players: MapPlayer[]
   } | null>(null)
 
@@ -139,8 +149,11 @@ export function useMapIO() {
       if (res.ok) {
         const data = await res.json()
         if (loadedMapStatus.value) {
-          loadedMapStatus.value.players = data.players      ?? []
-          allPlayerSetups.value         = data.player_setups ?? []
+          loadedMapStatus.value.players   = data.players      ?? []
+          loadedMapStatus.value.mapStatus = data.mapStatus    ?? loadedMapStatus.value.mapStatus
+          loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
+          allPlayerSetups.value           = data.player_setups ?? []
+          ownedTiles.value                = data.owned_tiles   ?? []
         }
       }
     } catch { /* silent */ }
@@ -195,7 +208,8 @@ export function useMapIO() {
         is_owner:    true,
         is_linked:   false,
         is_pending:  false,
-        mapStatus: 'created',
+        mapStatus:   'created',
+        hexturn:     0,
         players:     [],
       }
       await refreshMapList()
@@ -221,10 +235,12 @@ export function useMapIO() {
       is_linked:   data.is_linked   ?? false,
       is_pending:  data.is_pending  ?? false,
       mapStatus:   data.mapStatus ?? 'created',
+      hexturn:     data.hexturn   ?? 0,
       players:     data.players     ?? [],
     }
     playerSetup.value     = (data as any).player_setup  ?? null
     allPlayerSetups.value = (data as any).player_setups ?? []
+    ownedTiles.value      = (data as any).owned_tiles     ?? []
     return data
   }
 
@@ -249,6 +265,19 @@ export function useMapIO() {
     }
     await refreshMapList()
     showMsg('Map validated and locked!')
+  }
+
+  async function startMap(uid: string): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/start`, {
+      method: 'POST', headers: authHeaders(),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to start game')
+    if (loadedMapStatus.value?.uid === uid) {
+      loadedMapStatus.value.mapStatus = 'started'
+    }
+    await refreshMapList()
+    showMsg('Game started!')
   }
 
   async function endMap(uid: string): Promise<void> {
@@ -303,6 +332,13 @@ export function useMapIO() {
     const json = await res.json()
     if (!res.ok) throw new Error(json.error || 'Failed to save setup')
     playerSetup.value = setup
+    // Update allPlayerSetups immediately so the map re-renders
+    const userId = json.user_id
+    const existing = allPlayerSetups.value.find(s => s.user_id === userId)
+    const setupWithId = { ...setup, user_id: userId, actions: existing?.actions ?? 10 }
+    const idx = allPlayerSetups.value.findIndex(s => s.user_id === userId)
+    if (idx >= 0) allPlayerSetups.value[idx] = setupWithId
+    else allPlayerSetups.value.push(setupWithId)
     showMsg('Setup saved!')
   }
 
@@ -335,6 +371,31 @@ export function useMapIO() {
     })
   }
 
+  async function claimTile(uid: string, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/claim`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to claim tile')
+    ownedTiles.value = json.owned_tiles ?? ownedTiles.value
+    // Update current player's actions count
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.actions = json.actions
+  }
+
+  async function nextTurn(uid: string): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/nextturn`, {
+      method: 'POST', headers: authHeaders(),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to advance turn')
+    if (loadedMapStatus.value?.uid === uid) {
+      loadedMapStatus.value.hexturn = json.hexturn
+      allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
+    }
+    showMsg(`Turn ${json.hexturn} started!`)
+  }
+
   async function copyUidToClipboard() {
     await navigator.clipboard.writeText(lastHexmapUid.value)
     uidCopied.value = true
@@ -343,10 +404,10 @@ export function useMapIO() {
 
   return {
     saveMsg, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups,
+    uidCopied, userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, endMap, requestJoinMap, approveRequest, denyRequest, savePlayerSetup,
+    finishMap, startMap, endMap, nextTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard,
   }
 }

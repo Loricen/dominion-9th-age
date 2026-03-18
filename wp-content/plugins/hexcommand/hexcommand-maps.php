@@ -195,10 +195,31 @@ add_action('rest_api_init', function () {
         'permission_callback' => 'hexcommand_is_logged_in',
     ]);
 
+    // Claim a tile — linked player, map must be started
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/claim', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_claim_tile',
+        'permission_callback' => 'hexcommand_is_logged_in',
+    ]);
+
+    // Advance turn — owner only, map must be started
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/nextturn', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_next_turn',
+        'permission_callback' => 'hexcommand_is_advanced_player',
+    ]);
+
     // Finish (validate/lock) a map — owner only
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/finish', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_finish_map',
+        'permission_callback' => 'hexcommand_is_advanced_player',
+    ]);
+
+    // Start the game — owner only, all players must have a setup
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/start', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_start_map',
         'permission_callback' => 'hexcommand_is_advanced_player',
     ]);
 
@@ -341,8 +362,10 @@ function hexcommand_load_map(WP_REST_Request $request): WP_REST_Response {
         'size'       => get_post_meta($post_id, '_hexmap_size', true),
         'savedAt'    => $post->post_date,
         'mapStatus'  => hexcommand_get_state($post->ID),
+        'hexturn'    => (int) get_field('hexturn', $post_id) ?: 0,
         'hexes'      => $hexes,
         'players'      => $players,
+        'owned_tiles'   => hexcommand_get_json_field($post_id, 'owned_tiles') ?: [],
         'player_setups' => hexcommand_get_json_field($post_id, 'player_setups') ?: [],
         'player_setup' => (function() use ($post_id, $user_id) {
             $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
@@ -519,8 +542,8 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
 
     $post_id = $post->ID;
     $state   = hexcommand_get_state($post_id);
-    if ($state === 'ended') {
-        return new WP_REST_Response(['error' => 'Map has ended'], 409);
+    if (in_array($state, ['started', 'ended'], true)) {
+        return new WP_REST_Response(['error' => 'Setup is locked'], 409);
     }
 
     // Must be a linked player (or owner)
@@ -546,16 +569,147 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
     foreach ($setups as $s) {
         $setups_map[$s['user_id']] = $s;
     }
+    $existing_actions = isset($setups_map[$user_id]['actions']) ? (int)$setups_map[$user_id]['actions'] : 10;
     $setups_map[$user_id] = [
         'user_id'  => $user_id,
         'faction'  => $faction,
         'color'    => $color,
         'city_q'   => $city_q,
         'city_r'   => $city_r,
+        'actions'  => $existing_actions,
     ];
     hexcommand_set_json_field($post_id, 'player_setups', array_values($setups_map));
 
     return new WP_REST_Response(['success' => true, 'user_id' => $user_id], 200);
+}
+
+// ============================================================
+// CLAIM TILE — costs 1 action, tile must be adjacent to owned territory
+// ============================================================
+function hexcommand_claim_tile(WP_REST_Request $request): WP_REST_Response {
+    $uid     = strtoupper($request->get_param('uid'));
+    $user_id = get_current_user_id();
+    $post    = hexcommand_find_post_by_uid($uid);
+
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+
+    $post_id = $post->ID;
+    if (hexcommand_get_state($post_id) !== 'started') {
+        return new WP_REST_Response(['error' => 'Map must be started to claim tiles'], 409);
+    }
+
+    // Must be owner or linked player
+    $linked   = array_map('intval', (array) (hexcommand_get_json_field($post_id, 'users_linked') ?: []));
+    $is_owner = (int) $post->post_author === $user_id;
+    if (!$is_owner && !in_array($user_id, $linked, true)) {
+        return new WP_REST_Response(['error' => 'Forbidden'], 403);
+    }
+
+    $body = $request->get_json_params();
+    $q    = isset($body['q']) ? intval($body['q']) : null;
+    $r    = isset($body['r']) ? intval($body['r']) : null;
+    if ($q === null || $r === null) return new WP_REST_Response(['error' => 'Missing coordinates'], 400);
+
+    // Check player has actions remaining
+    $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    $setup_idx = null;
+    foreach ($setups as $i => $s) {
+        if ((int)($s['user_id'] ?? 0) === $user_id) { $setup_idx = $i; break; }
+    }
+    if ($setup_idx === null) return new WP_REST_Response(['error' => 'No setup found'], 409);
+    $actions = (int)($setups[$setup_idx]['actions'] ?? 0);
+    if ($actions <= 0) return new WP_REST_Response(['error' => 'No actions remaining'], 409);
+
+    // Check tile is not water
+    $hexmap_data = json_decode(get_field('hexmap_data', $post_id), true) ?: [];
+    $tile_terrain = null;
+    foreach ($hexmap_data as $hex) {
+        if ((int)($hex['q'] ?? -1) === $q && (int)($hex['r'] ?? -1) === $r) {
+            $tile_terrain = $hex['terrain'] ?? null;
+            break;
+        }
+    }
+    if ($tile_terrain === 'water') {
+        return new WP_REST_Response(['error' => 'Water tiles cannot be claimed'], 409);
+    }
+
+    // Check tile not already owned
+    $owned_tiles = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
+    foreach ($owned_tiles as $t) {
+        if ((int)$t['q'] === $q && (int)$t['r'] === $r) {
+            return new WP_REST_Response(['error' => 'Tile already claimed'], 409);
+        }
+    }
+
+    // Check adjacency — must be adjacent to own city or own tile
+    $my_city_q = (int)($setups[$setup_idx]['city_q'] ?? -999);
+    $my_city_r = (int)($setups[$setup_idx]['city_r'] ?? -999);
+    $my_tiles  = [['q' => $my_city_q, 'r' => $my_city_r]];
+    foreach ($owned_tiles as $t) {
+        if ((int)($t['user_id'] ?? 0) === $user_id) $my_tiles[] = $t;
+    }
+
+    $adjacent = false;
+    foreach ($my_tiles as $t) {
+        // Hex grid adjacency offsets (offset coords, even/odd col)
+        $col_parity = (int)$t['q'] % 2;
+        $offsets = $col_parity === 0
+            ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
+            : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]];
+        foreach ($offsets as [$dq, $dr]) {
+            if ((int)$t['q'] + $dq === $q && (int)$t['r'] + $dr === $r) {
+                $adjacent = true; break 2;
+            }
+        }
+    }
+    if (!$adjacent) return new WP_REST_Response(['error' => 'Tile not adjacent to your territory'], 409);
+
+    // Claim tile and deduct action
+    $owned_tiles[] = ['q' => $q, 'r' => $r, 'user_id' => $user_id];
+    $setups[$setup_idx]['actions'] = $actions - 1;
+    hexcommand_set_json_field($post_id, 'owned_tiles', $owned_tiles);
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+
+    return new WP_REST_Response([
+        'success'     => true,
+        'owned_tiles' => $owned_tiles,
+        'user_id'     => $user_id,
+        'actions'     => $setups[$setup_idx]['actions'],
+    ], 200);
+}
+
+// ============================================================
+// NEXT TURN — increments hexturn and resets all player actions
+// ============================================================
+function hexcommand_next_turn(WP_REST_Request $request): WP_REST_Response {
+    $uid      = strtoupper($request->get_param('uid'));
+    $owner_id = get_current_user_id();
+    $post     = hexcommand_find_post_by_uid($uid);
+
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+    if ((int) $post->post_author !== $owner_id) return new WP_REST_Response(['error' => 'Forbidden'], 403);
+
+    $post_id = $post->ID;
+    if (hexcommand_get_state($post_id) !== 'started') {
+        return new WP_REST_Response(['error' => 'Map must be started'], 409);
+    }
+
+    $hexturn = ((int) get_field('hexturn', $post_id) ?: 0) + 1;
+    update_field('hexturn', $hexturn, $post_id);
+
+    // Reset all player actions to 10
+    $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    foreach ($setups as &$setup) {
+        $setup['actions'] = 10;
+    }
+    unset($setup);
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+
+    return new WP_REST_Response([
+        'success'       => true,
+        'hexturn'       => $hexturn,
+        'player_setups' => $setups,
+    ], 200);
 }
 
 // ============================================================
@@ -580,6 +734,40 @@ function hexcommand_finish_map(WP_REST_Request $request): WP_REST_Response {
         $state = update_field('hexmap_state', 'ongoing', $post->ID);
     }
 
+    return new WP_REST_Response(['success' => true], 200);
+}
+
+// ============================================================
+// START MAP — owner only, all linked players must have a setup
+// ============================================================
+function hexcommand_start_map(WP_REST_Request $request): WP_REST_Response {
+    $uid      = strtoupper($request->get_param('uid'));
+    $owner_id = get_current_user_id();
+    $post     = hexcommand_find_post_by_uid($uid);
+
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+    if ((int) $post->post_author !== $owner_id) return new WP_REST_Response(['error' => 'Forbidden'], 403);
+
+    $post_id = $post->ID;
+    $state   = hexcommand_get_state($post_id);
+    if ($state !== 'ongoing') return new WP_REST_Response(['error' => 'Map must be ongoing to start'], 409);
+
+    $linked  = array_map('intval', (array) (hexcommand_get_json_field($post_id, 'users_linked') ?: []));
+    $setups  = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    $setup_user_ids = array_map(fn($s) => (int)($s['user_id'] ?? 0), $setups);
+
+    // All linked players + owner must have a setup
+    $all_players = array_merge([$owner_id], $linked);
+    if (empty($linked)) {
+        return new WP_REST_Response(['error' => 'No players have joined yet'], 409);
+    }
+    foreach ($all_players as $player_id) {
+        if (!in_array($player_id, $setup_user_ids, true)) {
+            return new WP_REST_Response(['error' => 'Not all players have chosen a starting city'], 409);
+        }
+    }
+
+    update_field('hexmap_state', 'started', $post_id);
     return new WP_REST_Response(['success' => true], 200);
 }
 
