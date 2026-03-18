@@ -132,6 +132,13 @@ function hexcommand_format_map(WP_Post $post, int $user_id = 0): array {
 // ============================================================
 add_action('rest_api_init', function () {
 
+    // Heartbeat — keeps the user marked as online
+    register_rest_route('hexcommand/v1', '/me/heartbeat', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_heartbeat',
+        'permission_callback' => 'hexcommand_is_logged_in',
+    ]);
+
     // Get current user info + role
     register_rest_route('hexcommand/v1', '/me', [
         'methods'             => 'GET',
@@ -251,6 +258,14 @@ function hexcommand_get_me(): WP_REST_Response {
 }
 
 // ============================================================
+// HEARTBEAT — updates last_seen timestamp for current user
+// ============================================================
+function hexcommand_heartbeat(): WP_REST_Response {
+    update_user_meta(get_current_user_id(), 'hexmap_last_seen', time());
+    return new WP_REST_Response(['success' => true], 200);
+}
+
+// ============================================================
 // LIST MAPS
 // advanced_player → their owned maps
 // player          → maps they are linked to
@@ -346,11 +361,21 @@ function hexcommand_load_map(WP_REST_Request $request): WP_REST_Response {
     $owner_data = get_userdata((int) $post->post_author);
     $players = [];
     if ($owner_data) {
-        $players[] = ['user_id' => (int) $post->post_author, 'name' => $owner_data->display_name, 'is_owner' => true];
+        $players[] = [
+            'user_id'   => (int) $post->post_author,
+            'name'      => $owner_data->display_name,
+            'is_owner'  => true,
+            'last_seen' => (int) get_user_meta((int) $post->post_author, 'hexmap_last_seen', true) ?: 0,
+        ];
     }
     foreach ($linked as $linked_id) {
         $u = get_userdata($linked_id);
-        if ($u) $players[] = ['user_id' => $linked_id, 'name' => $u->display_name, 'is_owner' => false];
+        if ($u) $players[] = [
+            'user_id'   => $linked_id,
+            'name'      => $u->display_name,
+            'is_owner'  => false,
+            'last_seen' => (int) get_user_meta($linked_id, 'hexmap_last_seen', true) ?: 0,
+        ];
     }
 
     return new WP_REST_Response([
@@ -570,13 +595,15 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
         $setups_map[$s['user_id']] = $s;
     }
     $existing_actions = isset($setups_map[$user_id]['actions']) ? (int)$setups_map[$user_id]['actions'] : 10;
+    $existing_resources = isset($setups_map[$user_id]['resources']) ? (int)$setups_map[$user_id]['resources'] : 0;
     $setups_map[$user_id] = [
-        'user_id'  => $user_id,
-        'faction'  => $faction,
-        'color'    => $color,
-        'city_q'   => $city_q,
-        'city_r'   => $city_r,
-        'actions'  => $existing_actions,
+        'user_id'   => $user_id,
+        'faction'   => $faction,
+        'color'     => $color,
+        'city_q'    => $city_q,
+        'city_r'    => $city_r,
+        'actions'   => $existing_actions,
+        'resources' => $existing_resources,
     ];
     hexcommand_set_json_field($post_id, 'player_setups', array_values($setups_map));
 
@@ -697,10 +724,24 @@ function hexcommand_next_turn(WP_REST_Request $request): WP_REST_Response {
     $hexturn = ((int) get_field('hexturn', $post_id) ?: 0) + 1;
     update_field('hexturn', $hexturn, $post_id);
 
-    // Reset all player actions to 10
-    $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    // Reset actions and add resources per player
+    $setups      = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    $owned_tiles = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
+
     foreach ($setups as &$setup) {
         $setup['actions'] = 10;
+
+        $player_id = (int)($setup['user_id'] ?? 0);
+
+        // Count owned tiles for this player
+        $tile_count = 0;
+        foreach ($owned_tiles as $t) {
+            if ((int)($t['user_id'] ?? 0) === $player_id) $tile_count++;
+        }
+
+        // City = 50, each tile = 10
+        $income = 50 + ($tile_count * 10);
+        $setup['resources'] = (int)($setup['resources'] ?? 0) + $income;
     }
     unset($setup);
     hexcommand_set_json_field($post_id, 'player_setups', $setups);

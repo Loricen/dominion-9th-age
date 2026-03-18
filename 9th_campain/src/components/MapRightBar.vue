@@ -50,7 +50,8 @@ const cityLabel = computed(() => {
 })
 
 const isLocked = computed(() => props.mapStatus === 'started' || props.mapStatus === 'ended')
-const myActions = computed(() => props.existingSetup?.actions ?? 0)
+const myActions    = computed(() => props.existingSetup?.actions   ?? 0)
+const myResources  = computed(() => props.existingSetup?.resources ?? 0)
 const actionsMax = 10
 
 const takenColors = computed(() =>
@@ -95,7 +96,7 @@ function save() {
       </div>
       <div class="city-select-actions">
         <button class="btn-confirm" :disabled="!selectedHex" @click="confirmCity">✓ Confirm</button>
-        <button class="btn-cancel" @click="emit('cancelCitySelect')">✕ Stop</button>
+        <button class="btn-cancel" @click="emit('cancelCitySelect')">✕ Cancel</button>
       </div>
     </div>
 
@@ -134,6 +135,15 @@ function save() {
         >
           {{ isClaiming ? '✕ Cancel' : '⚔️ Claim Territory' }}
         </button>
+      </div>
+
+      <!-- Resources -->
+      <div class="rb-section">
+        <div class="rb-label">Resources</div>
+        <div class="resources-row">
+          <span class="resources-icon">💰</span>
+          <span class="resources-value">{{ myResources.toLocaleString() }}</span>
+        </div>
       </div>
     </template>
 

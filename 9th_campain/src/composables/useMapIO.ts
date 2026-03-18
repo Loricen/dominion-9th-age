@@ -38,6 +38,7 @@ export interface MapPlayer {
   user_id: number
   name: string
   is_owner: boolean
+  last_seen: number
 }
 
 export interface OwnedTile {
@@ -49,6 +50,7 @@ export interface OwnedTile {
 export interface PlayerSetupWithId extends PlayerSetup {
   user_id: number
   actions: number
+  resources: number
 }
 
 export interface PlayerSetup {
@@ -99,6 +101,7 @@ export function useMapIO() {
   } | null>(null)
 
   let requestsPollInterval: ReturnType<typeof setInterval> | null = null
+  let heartbeatInterval:     ReturnType<typeof setInterval> | null = null
 
   function showMsg(msg: string) {
     saveMsg.value = msg
@@ -113,6 +116,7 @@ export function useMapIO() {
         isLoggedIn.value = true
         userRole.value   = me.role as UserRole
         await refreshMapList()
+        startHeartbeat()
         if (userRole.value === 'advanced_player') {
           await refreshRequests()
           startRequestPolling()
@@ -157,6 +161,18 @@ export function useMapIO() {
         }
       }
     } catch { /* silent */ }
+  }
+
+  async function sendHeartbeat(): Promise<void> {
+    try {
+      await fetch(`${WP_API}/me/heartbeat`, { method: 'POST', headers: authHeaders() })
+    } catch { /* silent */ }
+  }
+
+  function startHeartbeat() {
+    if (heartbeatInterval) return
+    sendHeartbeat()
+    heartbeatInterval = setInterval(sendHeartbeat, 30000)
   }
 
   function startRequestPolling() {

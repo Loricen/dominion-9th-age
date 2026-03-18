@@ -28,7 +28,6 @@ function formatDate(dateStr: string): string {
           <span v-if="map.mapStatus==='ended'"    class="map-tag tag-ended">ended</span>
           <span v-else-if="map.mapStatus==='started'" class="map-tag tag-started">started</span>
           <span v-else-if="map.mapStatus==='ongoing'" class="map-tag tag-locked">locked</span>
-          <span v-if="!map.is_owner" class="map-tag tag-joined">joined</span>
         </span>
         <span class="map-meta">{{ map.hexmap_uid }}<br/>
           {{ formatDate(map.savedAt) }}</span>

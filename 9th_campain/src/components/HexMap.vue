@@ -41,9 +41,24 @@ watch(() => joinRequests.value.length, (newLen, oldLen) => {
   if (newLen > oldLen) playJoinRequest()
 })
 
+// Play sound when current player's actions are reset (next turn via refresh)
+watch(() => {
+  const my = allPlayerSetups.value.find(
+    s => playerSetup.value && s.city_q === playerSetup.value.city_q && s.city_r === playerSetup.value.city_r
+  )
+  return my?.actions ?? 0
+}, (newActions, oldActions) => {
+  if (newActions > oldActions) playActionsReload()
+})
+
 // Play sound for everyone when game starts
 watch(() => loadedMapStatus.value?.mapStatus, (newStatus, oldStatus) => {
   if (newStatus === 'started' && oldStatus !== 'started') playGameStarts()
+})
+
+// Play sound when turn advances (actions reset) — via refresh or manual
+watch(() => loadedMapStatus.value?.hexturn, (newTurn, oldTurn) => {
+  if (newTurn !== undefined && oldTurn !== undefined && newTurn > oldTurn) playActionsReload()
 })
 
 const {
@@ -258,10 +273,8 @@ async function handleSaveSetup(setup: import('@/composables/useMapIO').PlayerSet
 
 async function confirmNextTurn() {
   if (!loadedMapStatus.value) return
-  try {
-    await nextTurn(loadedMapStatus.value.uid)
-    playActionsReload()
-  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
+  try { await nextTurn(loadedMapStatus.value.uid) }
+  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
   showNextTurnConfirm.value = false
 }
 
