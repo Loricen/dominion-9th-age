@@ -15,6 +15,8 @@ import SaveModal from './SaveModal.vue'
 import JoinRequestsPanel from './JoinRequestsPanel.vue'
 import JoinMapBanner from './JoinMapBanner.vue'
 import MapRightBar from './MapRightBar.vue'
+import ChatBox from './ChatBox.vue'
+
 
 const {
   hexes, selectedQ, selectedR, activeTerrain, selectedSize,
@@ -26,12 +28,12 @@ const {
 
 const {
   saveMsg, imageLoaded,
-  showUidModal, lastHexmapUid, uidCopied,
+  showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
   userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
   showMsg, checkAuth, downloadMap, saveToServer,
-  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, claimTile,
+  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
-  loadMapFromFile, loadImageAsCanvas, copyUidToClipboard,
+  loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
 
 const { playTileClick, playTileCapture, playActionsReload, playJoinRequest, playGameStarts } = useSound()
@@ -41,22 +43,12 @@ watch(() => joinRequests.value.length, (newLen, oldLen) => {
   if (newLen > oldLen) playJoinRequest()
 })
 
-// Play sound when current player's actions are reset (next turn via refresh)
-watch(() => {
-  const my = allPlayerSetups.value.find(
-    s => playerSetup.value && s.city_q === playerSetup.value.city_q && s.city_r === playerSetup.value.city_r
-  )
-  return my?.actions ?? 0
-}, (newActions, oldActions) => {
-  if (newActions > oldActions) playActionsReload()
-})
-
 // Play sound for everyone when game starts
 watch(() => loadedMapStatus.value?.mapStatus, (newStatus, oldStatus) => {
   if (newStatus === 'started' && oldStatus !== 'started') playGameStarts()
 })
 
-// Play sound when turn advances (actions reset) — via refresh or manual
+// Play sound when turn advances (actions reset) — covers both manual and refresh
 watch(() => loadedMapStatus.value?.hexturn, (newTurn, oldTurn) => {
   if (newTurn !== undefined && oldTurn !== undefined && newTurn > oldTurn) playActionsReload()
 })
@@ -97,12 +89,12 @@ const canEnd = computed(() =>
   (loadedMapStatus.value.mapStatus === 'ongoing' || loadedMapStatus.value.mapStatus === 'started')
 )
 
-const canNextTurn = computed(() =>
-  isAdvancedPlayer.value &&
-  loadedMapStatus.value !== null &&
-  loadedMapStatus.value.is_owner &&
-  loadedMapStatus.value.mapStatus === 'started'
+const canEndTurn = computed(() =>
+  loadedMapStatus.value?.mapStatus === 'started' &&
+  (loadedMapStatus.value.is_owner || loadedMapStatus.value.is_linked)
 )
+
+const myTurnDone = computed(() => mySetup.value?.turn_done ?? false)
 
 const showRightBar = computed(() =>
   loadedMapStatus.value?.mapStatus === 'ongoing' || loadedMapStatus.value?.mapStatus === 'started'
@@ -140,7 +132,6 @@ const showSaveModal     = ref(false)
 const pendingDeleteUid  = ref<string | null>(null)
 const showFinishConfirm = ref(false)
 const showStartConfirm  = ref(false)
-const showNextTurnConfirm = ref(false)
 const showEndConfirm    = ref(false)
 
 const isSelectingCity = ref(false)
@@ -181,6 +172,7 @@ async function handleLoadFromServer(uid: string) {
     if (data.size) selectedSize.value = data.size as MapSizeKey
     loadedMapName.value = data.name ?? uid
     showMsg(`Map "${data.name ?? uid}" loaded!`)
+    await fetchChat(uid)
     if (playerSetup.value?.color) playerBorderColor.value = playerSetup.value.color
   } catch (err: unknown) {
     showMsg(err instanceof Error ? err.message : 'Map not found')
@@ -278,10 +270,17 @@ async function confirmNextTurn() {
   showNextTurnConfirm.value = false
 }
 
+async function handleSendChat(text: string) {
+  if (!loadedMapStatus.value) return
+  try { await sendChat(loadedMapStatus.value.uid, text) }
+  catch { showMsg('Failed to send message') }
+}
+
 async function handleRefreshMap() {
   if (!loadedMapStatus.value) return
-  try { await refreshPlayers() }
-  catch { showMsg('Error refreshing map') }
+  try {
+    await refreshPlayers()
+  } catch { showMsg('Error refreshing map') }
 }
 
 async function handleJoinMap() {
@@ -321,7 +320,8 @@ onMounted(async () => {
       :can-finish="canFinish"
       :can-start="canStart"
       :can-end="canEnd"
-      :can-next-turn="canNextTurn"
+      :can-end-turn="canEndTurn"
+      :turn-done="myTurnDone"
       :hexturn="loadedMapStatus?.hexturn ?? 0"
       :map-status="mapStatus"
       :map-loaded="loadedMapStatus !== null"
@@ -337,7 +337,7 @@ onMounted(async () => {
       @size-change="handleSizeChange"
       @finish-map="showFinishConfirm = true"
       @start-game="showStartConfirm = true"
-      @next-turn="showNextTurnConfirm = true"
+      @end-turn="handleEndTurn"
       @end-game="showEndConfirm = true"
       @refresh-map="handleRefreshMap"
     />
@@ -356,6 +356,8 @@ onMounted(async () => {
         :is-advanced-player="canEdit"
         :map-players="loadedMapStatus?.players ?? []"
         :map-status="loadedMapStatus?.mapStatus ?? ''"
+        :chat-messages="chatMessages"
+        :current-user-id="currentUserId"
         @terrain-change="handleTerrainChange"
         @generate="buildMapRandom"
         @reset-procedural="resetProceduralSettings"
@@ -429,6 +431,13 @@ onMounted(async () => {
       @confirm="handleConfirmSave"
       @cancel="showSaveModal = false"
     />
+    <ChatBox
+      v-if="loadedMapStatus"
+      :messages="chatMessages"
+      :current-user-id="currentUserId"
+      :popped="true"
+      @send="handleSendChat"
+    />
 
     <!-- Delete confirm -->
     <div v-if="pendingDeleteUid" class="modal-overlay" @click.self="pendingDeleteUid = null">
@@ -461,18 +470,6 @@ onMounted(async () => {
         <div class="confirm-actions">
           <button class="btn-confirm" @click="confirmStart">⚔️ Start Game</button>
           <button class="btn-cancel" @click="showStartConfirm = false">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Next turn confirm -->
-    <div v-if="showNextTurnConfirm" class="modal-overlay" @click.self="showNextTurnConfirm = false">
-      <div class="confirm-modal">
-        <p>Advance to turn <strong>{{ (loadedMapStatus?.hexturn ?? 0) + 1 }}</strong>?</p>
-        <p class="confirm-hint">All player actions will be reset to 10.</p>
-        <div class="confirm-actions">
-          <button class="btn-confirm" @click="confirmNextTurn">⏭ Next Turn</button>
-          <button class="btn-cancel" @click="showNextTurnConfirm = false">Cancel</button>
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { TERRAIN_TYPES, TERRAIN_COLOR, TERRAIN_LABEL, type TerrainType, type MapSizeKey } from '@/composables/useHexMap'
 import type { ProceduralSettings } from '@/composables/useProceduralGen'
-import type { MapListItem, MapPlayer } from '@/composables/useMapIO'
+import type { MapListItem, MapPlayer, ChatMessage } from '@/composables/useMapIO'
 import ProceduralPanel from './ProceduralPanel.vue'
 import MapsList from './MapsList.vue'
 
@@ -19,6 +19,7 @@ const props = defineProps<{
   activeTerrain: TerrainType
   mapPlayers: MapPlayer[]
   mapStatus: string
+  currentUserId: number
 }>()
 
 const emit = defineEmits<{
@@ -32,9 +33,10 @@ const emit = defineEmits<{
 }>()
 
 const showGettingStarted = ref(true)
-const showPlayers         = ref(true)
+const showPlayers        = ref(true)
 const showMaps           = ref(true)
 const showProcedural     = ref(true)
+const showControls       = ref(true)
 </script>
 
 <template>
@@ -116,18 +118,19 @@ const showProcedural     = ref(true)
     </div>
 
     <!-- Controls — advanced_player only -->
-    <div class="panel" v-if="isAdvancedPlayer">
-      <div class="panel-title">Controls</div>
+    <div class="panel" v-if="isAdvancedPlayer && showControls">
+      <div class="panel-title">Controls <button class="close-btn" @click="showControls = false">✕</button></div>
       <div class="info-row"><kbd>Click</kbd> Paint terrain</div>
       <div class="info-row"><kbd>Drag</kbd> Paint area</div>
       <div class="info-row"><kbd>Scroll</kbd> Zoom</div>
       <div class="info-row"><kbd>Mid-drag</kbd> Pan</div>
     </div>
-    <div class="panel" v-else>
-      <div class="panel-title">Controls</div>
+    <div class="panel" v-else-if="showControls">
+      <div class="panel-title">Controls <button class="close-btn" @click="showControls = false">✕</button></div>
       <div class="info-row"><kbd>Scroll</kbd> Zoom</div>
       <div class="info-row"><kbd>Mid-drag</kbd> Pan</div>
     </div>
+
 
   </aside>
 </template>

@@ -132,6 +132,20 @@ function hexcommand_format_map(WP_Post $post, int $user_id = 0): array {
 // ============================================================
 add_action('rest_api_init', function () {
 
+    // Chat — get messages for a map
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/chat', [
+        'methods'             => 'GET',
+        'callback'            => 'hexcommand_get_chat',
+        'permission_callback' => 'hexcommand_is_logged_in',
+    ]);
+
+    // Chat — post a message
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/chat', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_post_chat',
+        'permission_callback' => 'hexcommand_is_logged_in',
+    ]);
+
     // Heartbeat — keeps the user marked as online
     register_rest_route('hexcommand/v1', '/me/heartbeat', [
         'methods'             => 'POST',
@@ -209,6 +223,13 @@ add_action('rest_api_init', function () {
         'permission_callback' => 'hexcommand_is_logged_in',
     ]);
 
+    // Player ends their turn
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/endturn', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_end_turn',
+        'permission_callback' => 'hexcommand_is_logged_in',
+    ]);
+
     // Advance turn — owner only, map must be started
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/nextturn', [
         'methods'             => 'POST',
@@ -255,6 +276,43 @@ function hexcommand_get_me(): WP_REST_Response {
         'name' => $user->display_name,
         'role' => hexcommand_get_role(),
     ], 200);
+}
+
+// ============================================================
+// CHAT — get and post messages stored as JSON in post meta
+// ============================================================
+function hexcommand_get_chat(WP_REST_Request $request): WP_REST_Response {
+    $uid  = strtoupper($request->get_param('uid'));
+    $post = hexcommand_find_post_by_uid($uid);
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+
+    $messages = hexcommand_get_json_field($post->ID, 'chat_messages') ?: [];
+    return new WP_REST_Response($messages, 200);
+}
+
+function hexcommand_post_chat(WP_REST_Request $request): WP_REST_Response {
+    $uid     = strtoupper($request->get_param('uid'));
+    $user_id = get_current_user_id();
+    $post    = hexcommand_find_post_by_uid($uid);
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+
+    $body = $request->get_json_params();
+    $text = sanitize_text_field($body['text'] ?? '');
+    if (empty($text)) return new WP_REST_Response(['error' => 'Empty message'], 400);
+
+    $user     = get_userdata($user_id);
+    $messages = hexcommand_get_json_field($post->ID, 'chat_messages') ?: [];
+    $messages[] = [
+        'user_id'   => $user_id,
+        'user_name' => $user->display_name,
+        'text'      => $text,
+        'ts'        => time(),
+    ];
+    // Keep last 200 messages
+    if (count($messages) > 200) $messages = array_slice($messages, -200);
+    hexcommand_set_json_field($post->ID, 'chat_messages', $messages);
+
+    return new WP_REST_Response(['success' => true, 'message' => end($messages)], 200);
 }
 
 // ============================================================
@@ -706,6 +764,54 @@ function hexcommand_claim_tile(WP_REST_Request $request): WP_REST_Response {
 }
 
 // ============================================================
+// END TURN — player marks themselves as done; auto-advances when all done
+// ============================================================
+function hexcommand_end_turn(WP_REST_Request $request): WP_REST_Response {
+    $uid     = strtoupper($request->get_param('uid'));
+    $user_id = get_current_user_id();
+    $post    = hexcommand_find_post_by_uid($uid);
+
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+
+    $post_id = $post->ID;
+    if (hexcommand_get_state($post_id) !== 'started') {
+        return new WP_REST_Response(['error' => 'Map must be started'], 409);
+    }
+
+    // Must be owner or linked player
+    $linked   = array_map('intval', (array) (hexcommand_get_json_field($post_id, 'users_linked') ?: []));
+    $is_owner = (int) $post->post_author === $user_id;
+    if (!$is_owner && !in_array($user_id, $linked, true)) {
+        return new WP_REST_Response(['error' => 'Forbidden'], 403);
+    }
+
+    // Mark player as done
+    $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    foreach ($setups as &$setup) {
+        if ((int)($setup['user_id'] ?? 0) === $user_id) {
+            $setup['turn_done'] = true;
+            break;
+        }
+    }
+    unset($setup);
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+
+    // Check if all players are done
+    $all_done = !empty($setups) && array_reduce($setups, fn($carry, $s) => $carry && ($s['turn_done'] ?? false), true);
+
+    if ($all_done) {
+        // Trigger next turn internally
+        return hexcommand_do_next_turn($post_id);
+    }
+
+    return new WP_REST_Response([
+        'success'       => true,
+        'all_done'      => false,
+        'player_setups' => $setups,
+    ], 200);
+}
+
+// ============================================================
 // NEXT TURN — increments hexturn and resets all player actions
 // ============================================================
 function hexcommand_next_turn(WP_REST_Request $request): WP_REST_Response {
@@ -720,20 +826,23 @@ function hexcommand_next_turn(WP_REST_Request $request): WP_REST_Response {
     if (hexcommand_get_state($post_id) !== 'started') {
         return new WP_REST_Response(['error' => 'Map must be started'], 409);
     }
+    return hexcommand_do_next_turn($post_id);
+}
 
+function hexcommand_do_next_turn(int $post_id): WP_REST_Response {
     $hexturn = ((int) get_field('hexturn', $post_id) ?: 0) + 1;
     update_field('hexturn', $hexturn, $post_id);
 
-    // Reset actions and add resources per player
+    // Reset actions, turn_done and add resources per player
     $setups      = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
     $owned_tiles = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
 
     foreach ($setups as &$setup) {
-        $setup['actions'] = 10;
+        $setup['actions']   = 10;
+        $setup['turn_done'] = false;
 
         $player_id = (int)($setup['user_id'] ?? 0);
 
-        // Count owned tiles for this player
         $tile_count = 0;
         foreach ($owned_tiles as $t) {
             if ((int)($t['user_id'] ?? 0) === $player_id) $tile_count++;
@@ -748,6 +857,7 @@ function hexcommand_next_turn(WP_REST_Request $request): WP_REST_Response {
 
     return new WP_REST_Response([
         'success'       => true,
+        'all_done'      => true,
         'hexturn'       => $hexturn,
         'player_setups' => $setups,
     ], 200);

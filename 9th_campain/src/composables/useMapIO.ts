@@ -41,6 +41,13 @@ export interface MapPlayer {
   last_seen: number
 }
 
+export interface ChatMessage {
+  user_id: number
+  user_name: string
+  text: string
+  ts: number
+}
+
 export interface OwnedTile {
   q: number
   r: number
@@ -51,6 +58,7 @@ export interface PlayerSetupWithId extends PlayerSetup {
   user_id: number
   actions: number
   resources: number
+  turn_done: boolean
 }
 
 export interface PlayerSetup {
@@ -85,6 +93,8 @@ export function useMapIO() {
   const userMaps        = ref<MapListItem[]>([])
   const isLoggedIn      = ref(false)
   const userRole        = ref<UserRole>('none')
+  const currentUserId   = ref<number>(0)
+  const chatMessages    = ref<ChatMessage[]>([])
   const joinRequests    = ref<JoinRequest[]>([])
   const playerSetup     = ref<PlayerSetup | null>(null)
   const allPlayerSetups = ref<PlayerSetupWithId[]>([])
@@ -113,8 +123,9 @@ export function useMapIO() {
       const res = await fetch(`${WP_API}/me`, { headers: authHeaders() })
       if (res.ok) {
         const me = await res.json()
-        isLoggedIn.value = true
-        userRole.value   = me.role as UserRole
+        isLoggedIn.value  = true
+        userRole.value    = me.role as UserRole
+        currentUserId.value = me.id ?? 0
         await refreshMapList()
         startHeartbeat()
         if (userRole.value === 'advanced_player') {
@@ -180,6 +191,8 @@ export function useMapIO() {
     requestsPollInterval = setInterval(async () => {
       await refreshRequests()
       await refreshPlayers()
+      const uid = loadedMapStatus.value?.uid
+      if (uid) await fetchChat(uid)
     }, 10000)
   }
 
@@ -351,7 +364,7 @@ export function useMapIO() {
     // Update allPlayerSetups immediately so the map re-renders
     const userId = json.user_id
     const existing = allPlayerSetups.value.find(s => s.user_id === userId)
-    const setupWithId = { ...setup, user_id: userId, actions: existing?.actions ?? 10 }
+    const setupWithId = { ...setup, user_id: userId, actions: existing?.actions ?? 10, resources: existing?.resources ?? 0, turn_done: existing?.turn_done ?? false }
     const idx = allPlayerSetups.value.findIndex(s => s.user_id === userId)
     if (idx >= 0) allPlayerSetups.value[idx] = setupWithId
     else allPlayerSetups.value.push(setupWithId)
@@ -399,6 +412,20 @@ export function useMapIO() {
     if (mySetup) mySetup.actions = json.actions
   }
 
+  async function endTurn(uid: string): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/endturn`, {
+      method: 'POST', headers: authHeaders(),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to end turn')
+    allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
+    if (json.all_done) {
+      if (loadedMapStatus.value?.uid === uid) {
+        loadedMapStatus.value.hexturn = json.hexturn
+      }
+    }
+  }
+
   async function nextTurn(uid: string): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/nextturn`, {
       method: 'POST', headers: authHeaders(),
@@ -412,6 +439,21 @@ export function useMapIO() {
     showMsg(`Turn ${json.hexturn} started!`)
   }
 
+  async function fetchChat(uid: string): Promise<void> {
+    try {
+      const res = await fetch(`${WP_API}/maps/${uid}/chat`, { headers: authHeaders() })
+      if (res.ok) chatMessages.value = await res.json()
+    } catch { /* silent */ }
+  }
+
+  async function sendChat(uid: string, text: string): Promise<void> {
+    const res = await fetch(`${WP_API}/maps/${uid}/chat`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
+    })
+    if (!res.ok) throw new Error('Failed to send message')
+    await fetchChat(uid)
+  }
+
   async function copyUidToClipboard() {
     await navigator.clipboard.writeText(lastHexmapUid.value)
     uidCopied.value = true
@@ -420,10 +462,10 @@ export function useMapIO() {
 
   return {
     saveMsg, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
+    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endMap, nextTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup,
-    loadMapFromFile, loadImageAsCanvas, copyUidToClipboard,
+    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup,
+    loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }
