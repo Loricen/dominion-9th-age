@@ -94,7 +94,7 @@ const showControls       = ref(true)
 
 
     <!-- Players — only when map is ongoing -->
-    <div class="panel" v-if="mapStatus === 'ongoing' && mapPlayers.length > 0">
+    <div class="panel" v-if="mapStatus !== 'created' && mapPlayers.length > 0">
       <div class="panel-title" @click="showPlayers = !showPlayers">
         ⚔️ Players <span class="chevron">{{ showPlayers ? '▲' : '▼' }}</span>
       </div>

@@ -63,8 +63,11 @@ const isAdvancedPlayer = computed(() => userRole.value === 'advanced_player')
 const isOwner = computed(() => isAdvancedPlayer.value && userMaps.value.length > 0)
 
 const canEdit = computed(() =>
-  isAdvancedPlayer.value &&
-  (loadedMapStatus.value === null || loadedMapStatus.value.mapStatus === "created")
+  isAdvancedPlayer.value && 
+  (loadedMapStatus.value === null || (loadedMapStatus.value.mapStatus === "created" && loadedMapStatus.value?.is_owner))
+)
+const showChat = computed(() =>
+  loadedMapStatus.value !== null && loadedMapStatus.value.mapStatus !== "created"
 )
 
 const canFinish = computed(() =>
@@ -263,11 +266,11 @@ async function handleSaveSetup(setup: import('@/composables/useMapIO').PlayerSet
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error saving setup') }
 }
 
-async function confirmNextTurn() {
+
+async function handleEndTurn() {
   if (!loadedMapStatus.value) return
-  try { await nextTurn(loadedMapStatus.value.uid) }
+  try { await endTurn(loadedMapStatus.value.uid) }
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
-  showNextTurnConfirm.value = false
 }
 
 async function handleSendChat(text: string) {
@@ -432,7 +435,7 @@ onMounted(async () => {
       @cancel="showSaveModal = false"
     />
     <ChatBox
-      v-if="loadedMapStatus"
+      v-if="loadedMapStatus && showChat"
       :messages="chatMessages"
       :current-user-id="currentUserId"
       :popped="true"

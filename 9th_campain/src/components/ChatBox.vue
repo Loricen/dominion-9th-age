@@ -33,14 +33,16 @@ function scrollToBottom() {
 
 watch(() => props.messages.length, scrollToBottom)
 onMounted(scrollToBottom)
+
+const showChat           = ref(true)
 </script>
 
 <template>
   <div class="chatbox chatbox--popped">
-    <div class="chatbox-header">
-      <span class="chatbox-title">💬 Chat</span>
+    <div class="chatbox-header" @click="showChat = !showChat">
+      <span class="chatbox-title">💬 Chat<span class="chevron">{{ showChat ? '▲' : '▼' }}</span></span>
     </div>
-    <div class="chatbox-messages" ref="listRef">
+    <div class="chatbox-messages collapsible" :class="{ collapsed: !showChat }" ref="listRef">
       <div v-if="messages.length === 0" class="chatbox-empty">No messages yet</div>
       <div
         v-for="(msg, i) in messages"
