@@ -14,6 +14,40 @@ const emit = defineEmits<{
 const input    = ref('')
 const listRef  = ref<HTMLElement | null>(null)
 
+// --- Drag ---
+const posX     = ref(20)
+const posY     = ref(20)
+const dragging = ref(false)
+let dragOffsetX = 0
+let dragOffsetY = 0
+
+function onDragStart(e: MouseEvent) {
+  if (e.button !== 0) return
+  dragging.value = true
+  dragOffsetX = e.clientX - posX.value
+  dragOffsetY = e.clientY - posY.value
+  e.preventDefault()
+}
+
+function onDragMove(e: MouseEvent) {
+  if (!dragging.value) return
+  posX.value = Math.max(0, Math.min(window.innerWidth  - 300, e.clientX - dragOffsetX))
+  posY.value = Math.max(0, Math.min(window.innerHeight - 200, e.clientY - dragOffsetY))
+}
+
+function onDragEnd() { dragging.value = false }
+
+onMounted(() => {
+  window.addEventListener('mousemove', onDragMove)
+  window.addEventListener('mouseup',   onDragEnd)
+  scrollToBottom()
+})
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup',   onDragEnd)
+})
+
+// --- Chat ---
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
@@ -32,17 +66,18 @@ function scrollToBottom() {
 }
 
 watch(() => props.messages.length, scrollToBottom)
-onMounted(scrollToBottom)
-
-const showChat           = ref(true)
 </script>
 
 <template>
-  <div class="chatbox chatbox--popped">
-    <div class="chatbox-header" @click="showChat = !showChat">
-      <span class="chatbox-title">💬 Chat<span class="chevron">{{ showChat ? '▲' : '▼' }}</span></span>
+  <div
+    class="chatbox chatbox--popped"
+    :style="{ left: posX + 'px', top: posY + 'px', bottom: 'auto', right: 'auto' }"
+    :class="{ dragging }"
+  >
+    <div class="chatbox-header" @mousedown="onDragStart" style="cursor: grab">
+      <span class="chatbox-title">💬 Chat</span>
     </div>
-    <div class="chatbox-messages collapsible" :class="{ collapsed: !showChat }" ref="listRef">
+    <div class="chatbox-messages" ref="listRef">
       <div v-if="messages.length === 0" class="chatbox-empty">No messages yet</div>
       <div
         v-for="(msg, i) in messages"
