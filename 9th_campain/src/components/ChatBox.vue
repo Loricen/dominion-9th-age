@@ -76,7 +76,7 @@ watch(() => props.messages.length, scrollToBottom)
     :class="{ dragging }"
   >
     <div class="chatbox-header" @mousedown="onDragStart" style="cursor: grab">
-      <span class="chatbox-title">💬 Chat<span class="chevron">{{ showChat ? '▲' : '▼' }}</span><span class="move-cross">X</span></span>
+      <span class="chatbox-title" @click="showChat = !showChat">💬 Chat<span class="chevron">{{ showChat ? '▲' : '▼' }}</span></span><span class="move-cross">X</span>
     </div>
     <div class="chatbox-messages collapsible" :class="{ collapsed: !showChat }" ref="listRef">
       <div v-if="messages.length === 0" class="chatbox-empty">No messages yet</div>
