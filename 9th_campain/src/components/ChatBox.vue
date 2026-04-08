@@ -20,6 +20,7 @@ const posY     = ref(window.screen.height - 550)
 const dragging = ref(false)
 let dragOffsetX = 0
 let dragOffsetY = 0
+const showChat = ref(true)
 
 function onDragStart(e: MouseEvent) {
   if (e.button !== 0) return
@@ -77,7 +78,7 @@ watch(() => props.messages.length, scrollToBottom)
     <div class="chatbox-header" @mousedown="onDragStart" style="cursor: grab">
       <span class="chatbox-title">💬 Chat<span class="chevron">{{ showChat ? '▲' : '▼' }}</span><span class="move-cross">X</span></span>
     </div>
-    <div class="chatbox-messages" ref="listRef">
+    <div class="chatbox-messages collapsible" :class="{ collapsed: !showChat }" ref="listRef">
       <div v-if="messages.length === 0" class="chatbox-empty">No messages yet</div>
       <div
         v-for="(msg, i) in messages"
