@@ -15,8 +15,8 @@ const input    = ref('')
 const listRef  = ref<HTMLElement | null>(null)
 
 // --- Drag ---
-const posX     = ref(20)
-const posY     = ref(20)
+const posX     = window.screen.height*0.2
+const posY     = window.screen.height*0.7
 const dragging = ref(false)
 let dragOffsetX = 0
 let dragOffsetY = 0
