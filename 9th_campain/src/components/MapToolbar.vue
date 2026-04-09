@@ -44,10 +44,10 @@ const jsonFileInput  = ref<HTMLInputElement | null>(null)
 const imageFileInput = ref<HTMLInputElement | null>(null)
 const uidInput       = ref('')
 const showUidLoad    = ref(false)
-var allowSkipTurn:boolean    = ref( false)
+var allowSkipTurn    =  false
 
 props.mapPlayers.forEach(element => { if (Date.now() / 1000 - element.last_seen >=  72000){
-  allowSkipTurn = true
+  (allowSkipTurn = true)}
 })
 
 function onJsonChange(e: Event) {
