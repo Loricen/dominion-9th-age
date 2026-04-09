@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { type MapSizeKey } from '@/composables/useHexMap'
+import type {MapPlayer } from '@/composables/useMapIO'
 
 const props = defineProps<{
   selectedSize: MapSizeKey
@@ -17,6 +18,7 @@ const props = defineProps<{
   hexturn: number
   mapStatus: { label: string; cls: string } | null
   mapLoaded: boolean
+  mapPlayers: MapPlayer[]
 }>()
 
 const emit = defineEmits<{
@@ -35,12 +37,18 @@ const emit = defineEmits<{
   sizeChange: [size: MapSizeKey]
   refreshMap: []
   endTurn: []
+  forceEndTurn: []
 }>()
 
 const jsonFileInput  = ref<HTMLInputElement | null>(null)
 const imageFileInput = ref<HTMLInputElement | null>(null)
 const uidInput       = ref('')
 const showUidLoad    = ref(false)
+var allowSkipTurn:boolean    = ref( false)
+
+props.mapPlayers.forEach(element => { if (Date.now() / 1000 - element.last_seen >=  72000){
+  allowSkipTurn = true
+})
 
 function onJsonChange(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
@@ -108,6 +116,10 @@ function submitUidLoad() {
         </button>
         <span v-else class="turn-waiting">⏳ Waiting… <span class="turn-badge">{{ hexturn }}</span></span>
       </template>
+      <button v-if="allowSkipTurn && canEndTurn" class="btn-nextturn" @click="emit('forceEndTurn')" :title="`Current turn: ${hexturn}`">
+        ⏹ Force Next Turn <span class="turn-badge">{{ hexturn }}</span>
+      </button>
+      
       <button v-if="canEnd" class="btn-end" @click="emit('endGame')">
         💀 End Game
       </button>

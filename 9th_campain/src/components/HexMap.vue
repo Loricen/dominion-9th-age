@@ -272,6 +272,11 @@ async function handleEndTurn() {
   try { await endTurn(loadedMapStatus.value.uid) }
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
 }
+async function handleForceEndTurn() {
+  if (!loadedMapStatus.value) return
+  try { await nextTurn(loadedMapStatus.value.uid) }
+  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
+}
 
 async function handleSendChat(text: string) {
   if (!loadedMapStatus.value) return
@@ -328,6 +333,7 @@ onMounted(async () => {
       :hexturn="loadedMapStatus?.hexturn ?? 0"
       :map-status="mapStatus"
       :map-loaded="loadedMapStatus !== null"
+      :map-players="loadedMapStatus?.players ?? []"
       @regenerate="buildMapRandom"
       @reset-view="resetView"
       @zoom-in="zoomIn"
@@ -341,6 +347,7 @@ onMounted(async () => {
       @finish-map="showFinishConfirm = true"
       @start-game="showStartConfirm = true"
       @end-turn="handleEndTurn"
+      @force-end-turn="handleForceEndTurn"
       @end-game="showEndConfirm = true"
       @refresh-map="handleRefreshMap"
     />
