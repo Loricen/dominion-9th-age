@@ -116,6 +116,9 @@ function submitUidLoad() {
         </button>
         <span v-else class="turn-waiting">⏳ Waiting… <span class="turn-badge">{{ hexturn }}</span></span>
       </template>
+      <div>
+        
+      </div>
       <button v-if="allowSkipTurn && canEndTurn" class="btn-nextturn" @click="emit('forceEndTurn')" :title="`Current turn: ${hexturn}`">
         ⏹ Force Next Turn <span class="turn-badge">{{ hexturn }}</span>
       </button>
