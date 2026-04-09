@@ -33,7 +33,7 @@ function onDragStart(e: MouseEvent) {
 function onDragMove(e: MouseEvent) {
   if (!dragging.value) return
   posX.value = Math.max(0, Math.min(window.innerWidth  - 300, e.clientX - dragOffsetX))
-  posY.value = Math.max(0, Math.min(window.innerHeight - 200, e.clientY - dragOffsetY))
+  posY.value = Math.max(0, Math.min(window.innerHeight - 100, e.clientY - dragOffsetY))
 }
 
 function onDragEnd() { dragging.value = false }
