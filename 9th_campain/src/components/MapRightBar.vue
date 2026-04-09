@@ -28,6 +28,7 @@ const props = defineProps<{
   allPlayerSetups: PlayerSetupWithId[]
   setupLocked: boolean
   isClaiming: boolean
+  isBuyingArmy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +37,7 @@ const emit = defineEmits<{
   cancelCitySelect: []
   colorChange: [color: string]
   toggleClaim: []
+  toggleBuyArmy: []
 }>()
 
 const selectedFaction  = ref(props.existingSetup?.faction   ?? '')
@@ -144,6 +146,16 @@ function save() {
           <span class="resources-icon">💰</span>
           <span class="resources-value">{{ myResources.toLocaleString() }}</span>
         </div>
+        <button
+          class="btn-claim"
+          :class="{ active: isBuyingArmy }"
+          :disabled="myResources < 500"
+          :title="myResources < 500 ? 'Need 500 resources' : ''"
+          @click="emit('toggleBuyArmy')"
+          style="margin-top: 6px"
+        >
+          {{ isBuyingArmy ? '✕ Cancel' : '⚔️ Buy Army (500)' }}
+        </button>
       </div>
     </template>
 

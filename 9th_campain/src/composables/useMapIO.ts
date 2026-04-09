@@ -48,6 +48,16 @@ export interface ChatMessage {
   ts: number
 }
 
+export interface Army {
+  id: number
+  user_id: number
+  hexmap: number
+  power: number
+  stats: string
+  q: number
+  r: number
+}
+
 export interface OwnedTile {
   q: number
   r: number
@@ -98,7 +108,8 @@ export function useMapIO() {
   const joinRequests    = ref<JoinRequest[]>([])
   const playerSetup     = ref<PlayerSetup | null>(null)
   const allPlayerSetups = ref<PlayerSetupWithId[]>([])
-  const ownedTiles      = ref<OwnedTile[]>([])
+  const ownedTiles = ref<OwnedTile[]>([])
+  const armies     = ref<Army[]>([])
 
   const loadedMapStatus = ref<{
     uid: string
@@ -168,7 +179,8 @@ export function useMapIO() {
           loadedMapStatus.value.mapStatus = data.mapStatus    ?? loadedMapStatus.value.mapStatus
           loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
           allPlayerSetups.value           = data.player_setups ?? []
-          ownedTiles.value                = data.owned_tiles   ?? []
+          ownedTiles.value = data.owned_tiles ?? []
+          armies.value     = data.armies       ?? []
         }
       }
     } catch { /* silent */ }
@@ -269,7 +281,8 @@ export function useMapIO() {
     }
     playerSetup.value     = (data as any).player_setup  ?? null
     allPlayerSetups.value = (data as any).player_setups ?? []
-    ownedTiles.value      = (data as any).owned_tiles     ?? []
+    ownedTiles.value = (data as any).owned_tiles ?? []
+    armies.value     = (data as any).armies       ?? []
     return data
   }
 
@@ -400,6 +413,17 @@ export function useMapIO() {
     })
   }
 
+  async function buyArmy(uid: string, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/buyarmy`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to buy army')
+    armies.value = json.armies ?? armies.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.resources = json.resources
+  }
+
   async function claimTile(uid: string, q: number, r: number): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/claim`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
@@ -417,15 +441,13 @@ export function useMapIO() {
       method: 'POST', headers: authHeaders(),
     })
     const json = await res.json()
-    if (!res.ok) throw new Error(json.error || 'Failed to end turn')
-    allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
-    if (json.all_done) {
-      if (loadedMapStatus.value?.uid === uid) {
-        loadedMapStatus.value.hexturn = json.hexturn
-      }
+    if (!res.ok) throw new Error(json.error || 'Failed to advance turn')
+    if (loadedMapStatus.value?.uid === uid) {
+      loadedMapStatus.value.hexturn = json.hexturn
+      allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
     }
+    showMsg(`Turn ${json.hexturn} started!`)
   }
-
   async function nextTurn(uid: string): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/nextturn`, {
       method: 'POST', headers: authHeaders(),
@@ -462,10 +484,10 @@ export function useMapIO() {
 
   return {
     saveMsg, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
+    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup,
+    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }

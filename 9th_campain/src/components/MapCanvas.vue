@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { type Hex, TERRAIN_COLOR, TERRAIN_BORDER, hexCenter, hexPoints, getSvgW, getSvgH } from '@/composables/useHexMap'
-import type { PlayerSetupWithId, OwnedTile } from '@/composables/useMapIO'
+import type { PlayerSetupWithId, OwnedTile, Army } from '@/composables/useMapIO'
 
 const props = defineProps<{
   hexes: Hex[]
@@ -14,6 +14,7 @@ const props = defineProps<{
   selectedBorderColor?: string
   playerSetups?: PlayerSetupWithId[]
   ownedTiles?: OwnedTile[]
+  armies?: Army[]
   claimingMode?: boolean
 }>()
 
@@ -80,6 +81,28 @@ function tileOwnerColor(q: number, r: number): string | null {
               :fill="setup.color"
               style="pointer-events: none; user-select: none"
             >🏰</text>
+          </template>
+        </g>
+        <!-- Army markers -->
+        <g v-for="army in (armies ?? [])" :key="army.id">
+          <template v-if="army.q != null && army.r != null">
+            <text
+              :x="hexCenter(army.q, army.r)[0] + 4"
+              :y="hexCenter(army.q, army.r)[1] - 3"
+              text-anchor="middle"
+              dominant-baseline="middle"
+              font-size="6"
+              style="pointer-events: none; user-select: none"
+            >⚔️</text>
+            <circle
+              :cx="hexCenter(army.q, army.r)[0] + 4"
+              :cy="hexCenter(army.q, army.r)[1] - 3"
+              r="4"
+              fill="none"
+              :stroke="(playerSetups ?? []).find(s => s.user_id === army.user_id)?.color ?? '#ffffff'"
+              stroke-width="1"
+              style="pointer-events: none"
+            />
           </template>
         </g>
       </svg>

@@ -43,7 +43,7 @@ const showControls       = ref(true)
   <aside class="sidebar">
 
     <!-- Getting Started -->
-    <div class="panel import-hint" v-if="!imageLoaded && showGettingStarted">
+    <div class="panel import-hint" v-if="!imageLoaded">
       <div class="panel-title">
         Getting Started
         <button @click="showGettingStarted = false">✕</button>
@@ -104,7 +104,6 @@ const showControls       = ref(true)
             <span class="player-icon">{{ p.is_owner ? '👑' : '⚔️' }}</span>
             <span class="player-name">{{ p.name }}</span>
             <span class="online-dot" :class="Date.now() / 1000 - p.last_seen < 30 ? 'online' : 'offline'" :title="Date.now() / 1000 - p.last_seen < 30 ? 'Online' : 'Offline'" /> 
-            <span>{{Date.now() / 1000 - p.last_seen}}</span>
             <span v-if="p.is_owner" class="player-tag">GM</span>
           </div>
         </div>

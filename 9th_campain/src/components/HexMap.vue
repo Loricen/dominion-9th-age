@@ -29,9 +29,9 @@ const {
 const {
   saveMsg, imageLoaded,
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
-  userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles,
+  userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
   showMsg, checkAuth, downloadMap, saveToServer,
-  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile,
+  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, 
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
@@ -63,11 +63,8 @@ const isAdvancedPlayer = computed(() => userRole.value === 'advanced_player')
 const isOwner = computed(() => isAdvancedPlayer.value && userMaps.value.length > 0)
 
 const canEdit = computed(() =>
-  isAdvancedPlayer.value && 
-  (loadedMapStatus.value === null || (loadedMapStatus.value.mapStatus === "created" && loadedMapStatus.value?.is_owner))
-)
-const showChat = computed(() =>
-  loadedMapStatus.value !== null && loadedMapStatus.value.mapStatus !== "created"
+  isAdvancedPlayer.value &&
+  (loadedMapStatus.value === null || loadedMapStatus.value.mapStatus === "created")
 )
 
 const canFinish = computed(() =>
@@ -91,13 +88,19 @@ const canEnd = computed(() =>
   loadedMapStatus.value.is_owner &&
   (loadedMapStatus.value.mapStatus === 'ongoing' || loadedMapStatus.value.mapStatus === 'started')
 )
-
 const canEndTurn = computed(() =>
   loadedMapStatus.value?.mapStatus === 'started' &&
   (loadedMapStatus.value.is_owner || loadedMapStatus.value.is_linked)
 )
 
 const myTurnDone = computed(() => mySetup.value?.turn_done ?? false)
+
+const canNextTurn = computed(() =>
+  isAdvancedPlayer.value &&
+  loadedMapStatus.value !== null &&
+  loadedMapStatus.value.is_owner &&
+  loadedMapStatus.value.mapStatus === 'started'
+)
 
 const showRightBar = computed(() =>
   loadedMapStatus.value?.mapStatus === 'ongoing' || loadedMapStatus.value?.mapStatus === 'started'
@@ -135,10 +138,12 @@ const showSaveModal     = ref(false)
 const pendingDeleteUid  = ref<string | null>(null)
 const showFinishConfirm = ref(false)
 const showStartConfirm  = ref(false)
+const showNextTurnConfirm = ref(false)
 const showEndConfirm    = ref(false)
 
 const isSelectingCity = ref(false)
 const isClaiming      = ref(false)
+const isBuyingArmy    = ref(false)
 // Current user's full setup (with actions) from allPlayerSetups
 const mySetup = computed(() => {
   if (!playerSetup.value) return null
@@ -239,10 +244,20 @@ async function handleConfirmSave(name: string) {
 
 function handleClickHex(e: { q: number; r: number }) {
   if (isSelectingCity.value) { selectHex(e.q, e.r); return }
+  if (isBuyingArmy.value) { handleBuyArmy(e.q, e.r); return }
   if (isClaiming.value) { handleClaimTile(e.q, e.r); return }
   if (!canEdit.value) return
   playTileClick()
   onClickHex(e.q, e.r)
+}
+
+async function handleBuyArmy(q: number, r: number) {
+  if (!loadedMapStatus.value) return
+  try {
+    await buyArmy(loadedMapStatus.value.uid, q, r)
+    isBuyingArmy.value = false
+    showMsg('Army deployed!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot buy army') }
 }
 
 async function handleClaimTile(q: number, r: number) {
@@ -266,12 +281,13 @@ async function handleSaveSetup(setup: import('@/composables/useMapIO').PlayerSet
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error saving setup') }
 }
 
-
 async function handleEndTurn() {
   if (!loadedMapStatus.value) return
   try { await endTurn(loadedMapStatus.value.uid) }
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
+  showNextTurnConfirm.value = false
 }
+
 async function handleForceEndTurn() {
   if (!loadedMapStatus.value) return
   try { await nextTurn(loadedMapStatus.value.uid) }
@@ -391,6 +407,7 @@ onMounted(async () => {
           :selected-border-color="playerBorderColor ?? '#FFD700'"
           :player-setups="allPlayerSetups"
           :owned-tiles="ownedTiles"
+          :armies="armies"
           :claiming-mode="isClaiming"
           @click-hex="handleClickHex"
           @hover-hex="handleHoverHex"
@@ -416,10 +433,12 @@ onMounted(async () => {
         :is-selecting-city="isSelectingCity"
         :all-player-setups="allPlayerSetups"
         :is-claiming="isClaiming"
+        :is-buying-army="isBuyingArmy"
         @save-setup="handleSaveSetup"
         @start-city-select="isSelectingCity = true"
         @cancel-city-select="isSelectingCity = false"
         @toggle-claim="isClaiming = !isClaiming"
+        @toggle-buy-army="isBuyingArmy = !isBuyingArmy"
         @color-change="playerBorderColor = $event"
       />
     </div>
@@ -442,7 +461,7 @@ onMounted(async () => {
       @cancel="showSaveModal = false"
     />
     <ChatBox
-      v-if="loadedMapStatus && showChat"
+      v-if="loadedMapStatus"
       :messages="chatMessages"
       :current-user-id="currentUserId"
       :popped="true"
@@ -480,6 +499,18 @@ onMounted(async () => {
         <div class="confirm-actions">
           <button class="btn-confirm" @click="confirmStart">⚔️ Start Game</button>
           <button class="btn-cancel" @click="showStartConfirm = false">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Next turn confirm -->
+    <div v-if="showNextTurnConfirm" class="modal-overlay" @click.self="showNextTurnConfirm = false">
+      <div class="confirm-modal">
+        <p>Advance to turn <strong>{{ (loadedMapStatus?.hexturn ?? 0) + 1 }}</strong>?</p>
+        <p class="confirm-hint">All player actions will be reset to 10.</p>
+        <div class="confirm-actions">
+          <button class="btn-confirm" @click="handleForceEndTurn">⏭ Next Turn</button>
+          <button class="btn-cancel" @click="showNextTurnConfirm = false">Cancel</button>
         </div>
       </div>
     </div>
