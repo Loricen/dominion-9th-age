@@ -414,7 +414,7 @@ export function useMapIO() {
   }
 
   async function buyArmy(uid: string, q: number, r: number): Promise<void> {
-    const res  = await fetch(`${WP_API}/maps/${uid}/buyarmy`, {
+    const res  = await fetch(`${WP_API}/maps/${uid}/buyArmy`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
     })
     const json = await res.json()
@@ -422,6 +422,18 @@ export function useMapIO() {
     armies.value = json.armies ?? armies.value
     const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
     if (mySetup) mySetup.resources = json.resources
+  }
+
+  async function moveArmy(uid: string, armyId: number, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/moveArmy`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to move army')
+    armies.value      = json.armies      ?? armies.value
+    ownedTiles.value  = json.owned_tiles ?? ownedTiles.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.actions = json.actions
   }
 
   async function claimTile(uid: string, q: number, r: number): Promise<void> {
@@ -441,12 +453,12 @@ export function useMapIO() {
       method: 'POST', headers: authHeaders(),
     })
     const json = await res.json()
-    if (!res.ok) throw new Error(json.error || 'Failed to advance turn')
-    if (loadedMapStatus.value?.uid === uid) {
+    if (!res.ok) throw new Error(json.error || 'Failed to end turn')
+    allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
+    if (json.all_done && loadedMapStatus.value?.uid === uid) {
       loadedMapStatus.value.hexturn = json.hexturn
-      allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
+      showMsg(`Turn ${json.hexturn} started!`)
     }
-    showMsg(`Turn ${json.hexturn} started!`)
   }
   async function nextTurn(uid: string): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/nextturn`, {
@@ -487,7 +499,7 @@ export function useMapIO() {
     uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy,
+    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }

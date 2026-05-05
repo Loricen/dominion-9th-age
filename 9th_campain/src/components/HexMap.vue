@@ -31,7 +31,7 @@ const {
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
   userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
   showMsg, checkAuth, downloadMap, saveToServer,
-  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, 
+  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, moveArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
@@ -144,6 +144,8 @@ const showEndConfirm    = ref(false)
 const isSelectingCity = ref(false)
 const isClaiming      = ref(false)
 const isBuyingArmy    = ref(false)
+const isMovingArmy    = ref(false)
+const selectedArmyId  = ref<number | null>(null)
 // Current user's full setup (with actions) from allPlayerSetups
 const mySetup = computed(() => {
   if (!playerSetup.value) return null
@@ -244,11 +246,29 @@ async function handleConfirmSave(name: string) {
 
 function handleClickHex(e: { q: number; r: number }) {
   if (isSelectingCity.value) { selectHex(e.q, e.r); return }
+  if (isMovingArmy.value && selectedArmyId.value !== null) { handleMoveArmy(e.q, e.r); return }
   if (isBuyingArmy.value) { handleBuyArmy(e.q, e.r); return }
   if (isClaiming.value) { handleClaimTile(e.q, e.r); return }
   if (!canEdit.value) return
   playTileClick()
   onClickHex(e.q, e.r)
+}
+
+function handleClickArmy(armyId: number) {
+  // Only allow selecting own armies during game
+  if (loadedMapStatus.value?.mapStatus !== 'started') return
+  const army = armies.value.find(a => a.id === armyId)
+  if (!army || army.user_id !== currentUserId.value) return
+  if (selectedArmyId.value === armyId) {
+    // Deselect
+    selectedArmyId.value = null
+    isMovingArmy.value = false
+  } else {
+    selectedArmyId.value = armyId
+    isMovingArmy.value = true
+    isClaiming.value = false
+    isBuyingArmy.value = false
+  }
 }
 
 async function handleBuyArmy(q: number, r: number) {
@@ -258,6 +278,16 @@ async function handleBuyArmy(q: number, r: number) {
     isBuyingArmy.value = false
     showMsg('Army deployed!')
   } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot buy army') }
+}
+
+async function handleMoveArmy(q: number, r: number) {
+  if (!loadedMapStatus.value || selectedArmyId.value === null) return
+  try {
+    await moveArmy(loadedMapStatus.value.uid, selectedArmyId.value, q, r)
+    selectedArmyId.value = null
+    isMovingArmy.value = false
+    showMsg('Army moved!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot move army') }
 }
 
 async function handleClaimTile(q: number, r: number) {
@@ -409,7 +439,10 @@ onMounted(async () => {
           :owned-tiles="ownedTiles"
           :armies="armies"
           :claiming-mode="isClaiming"
+          :selected-army-id="selectedArmyId"
+          :moving-mode="isMovingArmy"
           @click-hex="handleClickHex"
+          @click-army="e => handleClickArmy(e.armyId)"
           @hover-hex="handleHoverHex"
           @wheel="onWheel"
           @mousedown="onMouseDown"
@@ -434,11 +467,13 @@ onMounted(async () => {
         :all-player-setups="allPlayerSetups"
         :is-claiming="isClaiming"
         :is-buying-army="isBuyingArmy"
+        :is-moving-army="isMovingArmy"
         @save-setup="handleSaveSetup"
         @start-city-select="isSelectingCity = true"
         @cancel-city-select="isSelectingCity = false"
-        @toggle-claim="isClaiming = !isClaiming"
-        @toggle-buy-army="isBuyingArmy = !isBuyingArmy"
+        @toggle-claim="isClaiming = !isClaiming; isMovingArmy = false; selectedArmyId = null"
+        @toggle-buy-army="isBuyingArmy = !isBuyingArmy; isMovingArmy = false; selectedArmyId = null"
+        @cancel-move-army="isMovingArmy = false; selectedArmyId = null"
         @color-change="playerBorderColor = $event"
       />
     </div>

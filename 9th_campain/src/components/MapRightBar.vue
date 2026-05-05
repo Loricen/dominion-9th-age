@@ -29,6 +29,7 @@ const props = defineProps<{
   setupLocked: boolean
   isClaiming: boolean
   isBuyingArmy: boolean
+  isMovingArmy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   colorChange: [color: string]
   toggleClaim: []
   toggleBuyArmy: []
+  cancelMoveArmy: []
 }>()
 
 const selectedFaction  = ref(props.existingSetup?.faction   ?? '')
@@ -156,6 +158,15 @@ function save() {
         >
           {{ isBuyingArmy ? '✕ Cancel' : '⚔️ Buy Army (500)' }}
         </button>
+        <button
+          v-if="isMovingArmy"
+          class="btn-claim active"
+          style="margin-top: 6px"
+          @click="emit('cancelMoveArmy')"
+        >
+          ✕ Cancel Move
+        </button>
+        <p v-if="isMovingArmy" class="rb-hint" style="margin-top:4px">Click an army ⚔️ on the map to select it, then click an adjacent tile to move.</p>
       </div>
     </template>
 
