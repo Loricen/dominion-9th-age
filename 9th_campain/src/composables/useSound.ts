@@ -17,5 +17,6 @@ export function useSound() {
     playActionsReload: () => play('/src/assets/audio/actions_reload.mp3'),
     playJoinRequest:   () => play('/src/assets/audio/join_request.mp3'),
     playGameStarts:    () => play('/src/assets/audio/game_starts.mp3'),
+    playBattle:        () => play('/src/assets/audio/battle.mp3'),
   }
 }

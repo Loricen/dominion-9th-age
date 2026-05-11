@@ -683,7 +683,7 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
     foreach ($setups as $s) {
         $setups_map[$s['user_id']] = $s;
     }
-    $random_user_id = isset($setups_map[$user_id]['randomUserId']) ? (int)$setups_map[$user_id]['randomUserId'] : rand(0,4);
+    $random_user_id = isset($setups_map[$user_id]['randomuserid']) ? (int)$setups_map[$user_id]['randomuserid'] : rand(1,3);
     $existing_actions = isset($setups_map[$user_id]['actions']) ? (int)$setups_map[$user_id]['actions'] : 10;
     $existing_resources = isset($setups_map[$user_id]['resources']) ? (int)$setups_map[$user_id]['resources'] : 0;
     $setups_map[$user_id] = [
@@ -694,11 +694,11 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
         'city_r'    => $city_r,
         'actions'   => $existing_actions,
         'resources' => $existing_resources,
-        'randomUserId' => $random_user_id
+        'randomuserid' => $random_user_id
     ];
     hexcommand_set_json_field($post_id, 'player_setups', array_values($setups_map));
 
-    return new WP_REST_Response(['success' => true, 'user_id' => $user_id], 200);
+    return new WP_REST_Response(['success' => true, 'user_id' => $user_id, 'randomuserid' => $random_user_id], 200);
 }
 
 // ============================================================

@@ -143,8 +143,6 @@ function submitUidLoad() {
       <button class="btn-cancel" @click="showUidLoad = false">✕</button>
     </div>
 
-    <div v-if="saveMsg" class="save-msg">{{ saveMsg }}</div>
-
     <input ref="jsonFileInput"  type="file" accept=".json"   style="display:none" @change="onJsonChange" />
     <input ref="imageFileInput" type="file" accept="image/*" style="display:none" @change="onImageChange" />
   </header>

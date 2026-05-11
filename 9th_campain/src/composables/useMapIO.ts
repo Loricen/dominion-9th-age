@@ -96,6 +96,7 @@ function authHeaders(): HeadersInit {
 
 export function useMapIO() {
   const saveMsg         = ref('')
+  const popIn           = ref<{ msg: string; type: 'info' | 'battle' | 'error' } | null>(null)
   const imageLoaded     = ref(false)
   const showUidModal    = ref(false)
   const lastHexmapUid   = ref('')
@@ -125,9 +126,14 @@ export function useMapIO() {
   let requestsPollInterval: ReturnType<typeof setInterval> | null = null
   let heartbeatInterval:     ReturnType<typeof setInterval> | null = null
 
+  let popInTimer: ReturnType<typeof setTimeout> | null = null
+  function showPopIn(msg: string, type: 'info' | 'battle' | 'error' = 'info') {
+    if (popInTimer) clearTimeout(popInTimer)
+    popIn.value = { msg, type }
+    popInTimer = setTimeout(() => { popIn.value = null }, type === 'battle' ? 5000 : 3000)
+  }
   function showMsg(msg: string) {
-    saveMsg.value = msg
-    setTimeout(() => { saveMsg.value = '' }, 2500)
+    showPopIn(msg, 'info')
   }
 
   async function checkAuth() {
@@ -179,7 +185,7 @@ export function useMapIO() {
           loadedMapStatus.value.players   = data.players      ?? []
           loadedMapStatus.value.mapStatus = data.mapStatus    ?? loadedMapStatus.value.mapStatus
           loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
-          allPlayerSetups.value           = data.player_setups ?? []
+          allPlayerSetups.value           = (data.player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
           ownedTiles.value = data.owned_tiles ?? []
           armies.value     = data.armies       ?? []
         }
@@ -281,7 +287,7 @@ export function useMapIO() {
       players:     data.players     ?? [],
     }
     playerSetup.value     = (data as any).player_setup  ?? null
-    allPlayerSetups.value = (data as any).player_setups ?? []
+    allPlayerSetups.value = ((data as any).player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
     ownedTiles.value = (data as any).owned_tiles ?? []
     armies.value     = (data as any).armies       ?? []
     return data
@@ -378,7 +384,14 @@ export function useMapIO() {
     // Update allPlayerSetups immediately so the map re-renders
     const userId = json.user_id
     const existing = allPlayerSetups.value.find(s => s.user_id === userId)
-    const setupWithId = { ...setup, user_id: userId, actions: existing?.actions ?? 10, resources: existing?.resources ?? 0, turn_done: existing?.turn_done ?? false }
+    const setupWithId = {
+      ...setup,
+      user_id: userId,
+      actions: existing?.actions ?? 10,
+      resources: existing?.resources ?? 0,
+      turn_done: existing?.turn_done ?? false,
+      randomUserId: json.randomuserid ?? existing?.randomUserId ?? 1,
+    }
     const idx = allPlayerSetups.value.findIndex(s => s.user_id === userId)
     if (idx >= 0) allPlayerSetups.value[idx] = setupWithId
     else allPlayerSetups.value.push(setupWithId)
@@ -458,7 +471,7 @@ export function useMapIO() {
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error || 'Failed to end turn')
-    allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
+    allPlayerSetups.value = (json.player_setups ?? allPlayerSetups.value).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
     if (json.all_done && loadedMapStatus.value?.uid === uid) {
       loadedMapStatus.value.hexturn = json.hexturn
       showMsg(`Turn ${json.hexturn} started!`)
@@ -472,7 +485,7 @@ export function useMapIO() {
     if (!res.ok) throw new Error(json.error || 'Failed to advance turn')
     if (loadedMapStatus.value?.uid === uid) {
       loadedMapStatus.value.hexturn = json.hexturn
-      allPlayerSetups.value = json.player_setups ?? allPlayerSetups.value
+      allPlayerSetups.value = (json.player_setups ?? allPlayerSetups.value).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
     }
     showMsg(`Turn ${json.hexturn} started!`)
   }
@@ -499,7 +512,7 @@ export function useMapIO() {
   }
 
   return {
-    saveMsg, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
+    saveMsg, popIn, showPopIn, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
     uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,

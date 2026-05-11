@@ -47,6 +47,19 @@ function tileOwnerColor(q: number, r: number): string | null {
 }
 
 // Compute the set of valid move destinations when an army is selected
+// enemyArmyPositions: tiles directly occupied by an enemy army (battle targets, shown red)
+// validMoveTiles: all adjacent non-water tiles (including battle targets)
+const enemyArmyPositions = computed<Set<string>>(() => {
+  const result = new Set<string>()
+  if (!props.movingMode || props.selectedArmyId == null) return result
+  const army = (props.armies ?? []).find(a => a.id === props.selectedArmyId)
+  if (!army) return result
+  for (const a of (props.armies ?? [])) {
+    if (a.user_id !== army.user_id) result.add(`${a.q},${a.r}`)
+  }
+  return result
+})
+
 const validMoveTiles = computed<Set<string>>(() => {
   const result = new Set<string>()
   if (!props.movingMode || props.selectedArmyId == null) return result
@@ -61,26 +74,11 @@ const validMoveTiles = computed<Set<string>>(() => {
     ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
     : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
 
-  // Collect tiles protected by enemy armies (their tile + all adjacent tiles)
-  const enemyArmyTiles = new Set<string>()
-  const OFFSETS_EVEN: [number,number][] = [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
-  const OFFSETS_ODD:  [number,number][] = [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
-  for (const a of (props.armies ?? [])) {
-    if (a.user_id !== army.user_id) {
-      enemyArmyTiles.add(`${a.q},${a.r}`)
-      const offsets = a.q % 2 === 0 ? OFFSETS_EVEN : OFFSETS_ODD
-      for (const [dq, dr] of offsets) {
-        enemyArmyTiles.add(`${a.q + dq},${a.r + dr}`)
-      }
-    }
-  }
-
   for (const [dq, dr] of offsets) {
     const nq = q + dq
     const nr = r + dr
     const hex = (props.hexes ?? []).find(h => h.q === nq && h.r === nr)
     if (!hex || hex.terrain === 'water') continue
-    if (enemyArmyTiles.has(`${nq},${nr}`)) continue
     result.add(`${nq},${nr}`)
   }
   return result
@@ -88,6 +86,10 @@ const validMoveTiles = computed<Set<string>>(() => {
 
 function isValidMoveTile(q: number, r: number): boolean {
   return validMoveTiles.value.has(`${q},${r}`)
+}
+
+function isEnemyArmyTile(q: number, r: number): boolean {
+  return enemyArmyPositions.value.has(`${q},${r}`)
 }
 
 // Tiles where the current player can build an army (their own cities)
@@ -108,6 +110,7 @@ function isCityTile(q: number, r: number): boolean {
 
 function hexStroke(hex: Hex): string {
   if (isSelected(hex.q, hex.r)) return props.selectedBorderColor ?? '#FFD700'
+  if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return '#ff3333'
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return '#00e5ff'
   if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return '#FFD700'
   const ownerColor = tileOwnerColor(hex.q, hex.r)
@@ -118,6 +121,7 @@ function hexStroke(hex: Hex): string {
 
 function hexStrokeWidth(hex: Hex): number {
   if (isSelected(hex.q, hex.r)) return 2
+  if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return 2.5
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 2
   if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 2.5
   if (tileOwnerColor(hex.q, hex.r)) return 2
@@ -125,6 +129,7 @@ function hexStrokeWidth(hex: Hex): number {
 }
 
 function hexClass(hex: Hex): string {
+  if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return 'hex-battle-target'
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 'hex-move-target'
   if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 'hex-city-target'
   if (props.claimingMode && !tileOwnerColor(hex.q, hex.r) && hex.terrain !== 'water') return 'hex-claimable'
@@ -196,15 +201,13 @@ function armyColor(army: Army): string {
         <!-- Player city markers -->
         <g v-for="setup in (playerSetups ?? [])" :key="`city-${setup.user_id}`">
           <template v-if="setup.city_q != null && setup.city_r != null">
-            <text
-              :x="hexCenter(setup.city_q, setup.city_r)[0]"
-              :y="hexCenter(setup.city_q, setup.city_r)[1] + 1"
-              text-anchor="middle"
-              dominant-baseline="middle"
-              font-size="12"
-              :fill="setup.color"
-              style="pointer-events: none; user-select: none"
-            >🏰 <img :src="`/src/assets/img/town-${setup.randomUserId}.svg`" :alt="'city'" class="faction-icon" /></text>
+            <image
+              :x="hexCenter(setup.city_q, setup.city_r)[0] - 8.5"
+              :y="hexCenter(setup.city_q, setup.city_r)[1] - 6.5"
+              width="17"
+              height="17"
+              :href="`/src/assets/img/town-${setup.randomUserId}.svg`"
+              style="pointer-events: none" />
           </template>
         </g>
 
