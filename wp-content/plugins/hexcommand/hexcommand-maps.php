@@ -100,7 +100,7 @@ function hexcommand_get_json_field(int $post_id, string $key): array {
 }
 
 function hexcommand_set_json_field(int $post_id, string $key, array $value): void {
-    update_field($key, wp_json_encode(array_values($value)), $post_id);
+    update_field($key, wp_json_encode($value), $post_id);
 }
 // ============================================================
 // HELPER: get map state (reads radio field, falls back to legacy booleans)
@@ -452,20 +452,20 @@ function hexcommand_load_map(WP_REST_Request $request): WP_REST_Response {
         'meta_query'  => [['key' => 'hexmap', 'value' => $post_id]],
     ]);
     foreach ($armies as $a) {
-        $army_user = get_field('user', $a->ID);    
-        $a['position'] = hexcommand_get_json_field( $a->ID, 'position');
-        $a['stats'] = hexcommand_get_json_field( $a->ID, 'stats');
-        $a['power'] = get_field('power', $a->ID); 
-        if($army_user == $user_id){
-            $a['visible'] = true;
-        }
-        else{ // ajouter armée ennemie visible si en contact avec la frontière
-            $a['visible'] = false;
-        }
-        $visible_armies[] = $a
+        $army_user = (int) $a->post_author;
+        $pos       = hexcommand_get_json_field($a->ID, 'position') ?: [];
+        $visible_armies[] = [
+            'id'      => $a->ID,
+            'user_id' => $army_user,
+            'hexmap'  => $post_id,
+            'power'   => (int) get_field('power', $a->ID),
+            'stats'   => hexcommand_get_json_field($a->ID, 'stats') ?: [],
+            'q'       => $pos['q'] ?? null,
+            'r'       => $pos['r'] ?? null,
+            'visible' => $army_user === $user_id,
+        ];
     }
-    hexcommand_get_json_field($army_id, 'stats', $armies['stats']);
-    hexcommand_get_json_field($army_id, 'position', $armies['position']);
+    // (armies already populated above)
     return new WP_REST_Response([
         'hexmap_uid' => $uid,
         'name'       => $post->post_title,
@@ -490,7 +490,7 @@ function hexcommand_load_map(WP_REST_Request $request): WP_REST_Response {
         'is_owner'   => (int) $post->post_author === $user_id,
         'is_linked'  => in_array($user_id, $linked, true),
         'is_pending' => in_array($user_id, $pending, true),
-        'armies'    => $visible_armies,
+        'armies'    => hexcommand_get_armies_for_map($post_id, $user_id),
     ], 200);
 }
 
@@ -683,6 +683,7 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
     foreach ($setups as $s) {
         $setups_map[$s['user_id']] = $s;
     }
+    $random_user_id = isset($setups_map[$user_id]['randomUserId']) ? (int)$setups_map[$user_id]['randomUserId'] : rand(0,4);
     $existing_actions = isset($setups_map[$user_id]['actions']) ? (int)$setups_map[$user_id]['actions'] : 10;
     $existing_resources = isset($setups_map[$user_id]['resources']) ? (int)$setups_map[$user_id]['resources'] : 0;
     $setups_map[$user_id] = [
@@ -693,6 +694,7 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
         'city_r'    => $city_r,
         'actions'   => $existing_actions,
         'resources' => $existing_resources,
+        'randomUserId' => $random_user_id
     ];
     hexcommand_set_json_field($post_id, 'player_setups', array_values($setups_map));
 
@@ -976,6 +978,33 @@ function hexcommand_end_map(WP_REST_Request $request): WP_REST_Response {
 
     return new WP_REST_Response(['success' => true], 200);
 }
+// ============================================================
+// HELPER — load all army posts for a map in frontend shape
+// ============================================================
+function hexcommand_get_armies_for_map(int $post_id, int $current_user_id): array {
+    $army_posts = get_posts([
+        'post_type'      => 'army',
+        'posts_per_page' => -1,
+        'meta_query'     => [['key' => 'hexmap', 'value' => $post_id]],
+    ]);
+    $result = [];
+    foreach ($army_posts as $a) {
+        $army_user = (int) $a->post_author;
+        $pos       = hexcommand_get_json_field($a->ID, 'position') ?: [];
+        $result[] = [
+            'id'      => $a->ID,
+            'user_id' => $army_user,
+            'hexmap'  => $post_id,
+            'power'   => (int) get_field('power', $a->ID),
+            'stats'   => hexcommand_get_json_field($a->ID, 'stats') ?: [],
+            'q'       => $pos['q'] ?? null,
+            'r'       => $pos['r'] ?? null,
+            'visible' => $army_user === $current_user_id,
+        ];
+    }
+    return $result;
+}
+
 function hexcommand_buy_army(WP_REST_Request $request): WP_REST_Response {
     $body    = $request->get_json_params();
     $uid     = $request->get_param('uid');
@@ -1010,46 +1039,53 @@ function hexcommand_buy_army(WP_REST_Request $request): WP_REST_Response {
     $actions = (int)($setups[$setup_idx]['actions'] ?? 0);
     if ($actions <= 0) return new WP_REST_Response(['error' => 'No actions remaining'], 409);
 
+    // Check the tile is the player's own city
+    $city_q = (int)($setups[$setup_idx]['city_q'] ?? -999);
+    $city_r = (int)($setups[$setup_idx]['city_r'] ?? -999);
+    if ($q !== $city_q || $r !== $city_r) {
+        return new WP_REST_Response(['error' => 'Armies can only be built on your city tile'], 409);
+    }
+
     // Check the tile is not occupied by another army
-    
-    //$armies = hexcommand_get_json_field($post_id, 'armies') ?: [];
-    $armies = get_posts([
-        'post_type'   => 'army',
-        'meta_query'  => [['key' => 'hexmap', 'value' => $post_id]],
+    $existing_armies = get_posts([
+        'post_type'      => 'army',
+        'posts_per_page' => -1,
+        'meta_query'     => [['key' => 'hexmap', 'value' => $post_id]],
     ]);
-    foreach ($armies as $a) {
-        $a['position'] = hexcommand_get_json_field('position', $a->ID);        
-        if ((int)$a['position'][0] === $q && (int)$a['position'][1] === $r) {
+    foreach ($existing_armies as $a) {
+        $pos = hexcommand_get_json_field($a->ID, 'position');
+        if (isset($pos['q'], $pos['r']) && (int)$pos['q'] === $q && (int)$pos['r'] === $r) {
             return new WP_REST_Response(['error' => 'Tile already occupied by an army'], 409);
         }
     }
 
-    // Place the army, deduct resources and one action
-    $armies[] = [
-        'hexmap'  => $post_id,
-        'power'   => hexcommand_generate_uid(),
-        'stats'   => '',
-        'q'       => $q,
-        'r'       => $r,
-    ];
-    $setups[$setup_idx]['resources'] = $resources - $army_cost;
-    $setups[$setup_idx]['actions']   = $actions - 1;
-    
+    // Create the army post
+    $power   = rand(1, 500); // base army strength
     $army_id = wp_insert_post([
         'post_type'   => 'army',
         'post_status' => 'publish',
-        'post_title'  => 'army'.$user_id.'_'.count($armies) + 1,
+        'post_title'  => 'army_' . $user_id . '_' . (count($existing_armies) + 1),
         'post_author' => $user_id,
     ]);
-    update_field('hexmap', $armies['hexmap'], $army_id);
-    update_field('power', $armies['power'], $army_id);
-    update_field('user', $user_id, $army_id);
-    hexcommand_set_json_field($army_id, 'stats', $armies['stats']);
-    hexcommand_set_json_field($army_id, 'position', $armies['position']);
+    if (!$army_id || is_wp_error($army_id)) {
+        return new WP_REST_Response(['error' => 'Failed to create army'], 500);
+    }
+    update_field('hexmap', $post_id,  $army_id);
+    update_field('power',  $power,    $army_id);
+    update_field('user_linked',  $user_id,    $army_id);
+    hexcommand_set_json_field($army_id, 'stats',    []);
+    hexcommand_set_json_field($army_id, 'position', ['q' => $q, 'r' => $r]);
+
+    // Deduct resources and one action
+    $setups[$setup_idx]['resources'] = $resources - $army_cost;
+    $setups[$setup_idx]['actions']   = $actions - 1;
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+
+    $all_armies = hexcommand_get_armies_for_map($post_id, $user_id);
 
     return new WP_REST_Response([
         'success'   => true,
-        'armies'    => $armies,
+        'armies'    => $all_armies,
         'resources' => $setups[$setup_idx]['resources'],
         'user_id'   => $user_id,
     ], 200);
@@ -1062,9 +1098,9 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
     $uid     = $request->get_param('uid');
     $user_id = get_current_user_id();
 
-    $army_id = isset($body['army_id']) ? intval($body['army_id']) : null;
-    $q       = isset($body['q'])       ? intval($body['q'])       : null;
-    $r       = isset($body['r'])       ? intval($body['r'])       : null;
+    $army_id = json_decode(isset($body['army_id']) ? intval($body['army_id']) : null);
+    $q       = json_decode(isset($body['q'])       ? intval($body['q'])       : null);
+    $r       = json_decode(isset($body['r'])       ? intval($body['r'])       : null);
     if ($army_id === null || $q === null || $r === null) {
         return new WP_REST_Response(['error' => 'Missing army_id or coordinates'], 400);
     }
@@ -1085,20 +1121,43 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
     $actions = (int)($setups[$setup_idx]['actions'] ?? 0);
     if ($actions <= 0) return new WP_REST_Response(['error' => 'No actions remaining'], 409);
 
-    // Find the army and verify ownership
-    $armies   = hexcommand_get_json_field($post_id, 'armies') ?: [];
-    $army_idx = null;
-    foreach ($armies as $i => $a) {
-        if ((int)($a['id'] ?? 0) === $army_id) { $army_idx = $i; break; }
+    // Find the army post and verify ownership
+    $army_post = get_post($army_id);
+    if (!$army_post || $army_post->post_type !== 'army') {
+        return new WP_REST_Response(['error' => 'Army not found'], 404);
     }
-    if ($army_idx === null) return new WP_REST_Response(['error' => 'Army not found'], 404);
-    if ((int)($armies[$army_idx]['user_id'] ?? 0) !== $user_id) {
-        return new WP_REST_Response(['error' => 'Not your army'], 403);
+    $army_owner = (int) get_field('user_linked', json_decode($army_id));
+    if ($army_owner !== $user_id) {
+        return new WP_REST_Response(['error' => 'Not your army'.$army_owner.' - '. $user_id], 403);
+    }
+    $army_hexmap = (int) get_field('hexmap', $army_id);
+    if ($army_hexmap !== $post_id) {
+        return new WP_REST_Response(['error' => 'Army does not belong to this map'], 403);
     }
 
+    // Get current position
+    $from_pos = hexcommand_get_json_field($army_id, 'position') ?: [];
+    $from_q   = (int)($from_pos['q'] ?? 0);
+    $from_r   = (int)($from_pos['r'] ?? 0);
+
+    // Load all armies for adjacency/collision checks
+    $all_army_posts = get_posts([
+        'post_type'      => 'army',
+        'posts_per_page' => -1,
+        'meta_query'     => [['key' => 'hexmap', 'value' => $post_id]],
+    ]);
+    $armies = [];
+    foreach ($all_army_posts as $ap) {
+        $pos = hexcommand_get_json_field($ap->ID, 'position') ?: [];
+        $armies[] = [
+            'id'      => $ap->ID,
+            'user_id' => (int) $user_id,
+            'power'   => (int) get_field('power', $ap->ID),
+            'q'       => (int)($pos['q'] ?? 0),
+            'r'       => (int)($pos['r'] ?? 0),
+        ];
+    }
     // Destination must be adjacent (offset-grid, even/odd col parity)
-    $from_q      = (int)$armies[$army_idx]['q'];
-    $from_r      = (int)$armies[$army_idx]['r'];
     $col_parity  = $from_q % 2;
     $offsets     = $col_parity === 0
         ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
@@ -1120,16 +1179,92 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
         }
     }
 
-    // Check no enemy army already occupies the destination
+    // Check for enemy army on destination — if present, resolve combat
+    $combat       = null;
+    $defender_id  = null;
     foreach ($armies as $a) {
-        if ((int)$a['q'] === $q && (int)$a['r'] === $r && (int)($a['user_id'] ?? 0) !== $user_id) {
-            return new WP_REST_Response(['error' => 'Destination occupied by an enemy army'], 409);
+        if ((int)$a['q'] === $q && (int)$a['r'] === $r && $a['user_id'] !== $user_id && $a['user_id'] !== 0) {
+            $defender_id = $a['id'];
+            break;
         }
     }
 
-    // Move the army
-    $armies[$army_idx]['q'] = $q;
-    $armies[$army_idx]['r'] = $r;
+    if ($defender_id !== null) {
+        // Resolve combat
+        $attacker_power = 0;
+        $defender_power = 0;
+        foreach ($armies as $a) {
+            if ($a['id'] === $army_id)    $attacker_power = $a['power'];
+            if ($a['id'] === $defender_id) $defender_power = $a['power'];
+        }
+        $attacker_roll  = rand(1, 100);
+        $defender_roll  = rand(1, 150);
+        $attacker_total = $attacker_power + $attacker_roll;
+        $defender_total = $defender_power + $defender_roll;
+
+        if ($attacker_total >= $defender_total) {
+            // Attacker wins — remove defender, attacker survives with leftover power
+            wp_delete_post($defender_id, true);
+            $winner_power = max(1, $attacker_total - $defender_total);
+            update_field('power', $winner_power, $army_id);
+            // Move attacker to destination
+            hexcommand_set_json_field($army_id, 'position', ['q' => $q, 'r' => $r]);
+            // Remove defender from local array, update attacker position
+            $armies = array_values(array_filter($armies, fn($a) => $a['id'] !== $defender_id));
+            foreach ($armies as &$a) {
+                if ($a['id'] === $army_id) { $a['q'] = $q; $a['r'] = $r; $a['power'] = $winner_power; break; }
+            }
+            unset($a);
+            $combat = [
+                'result'          => 'attacker_wins',
+                'attacker_roll'   => $attacker_roll,
+                'defender_roll'   => $defender_roll,
+                'attacker_total'  => $attacker_total,
+                'defender_total'  => $defender_total,
+                'winner_power'    => $winner_power,
+            ];
+        } else {
+            // Defender wins — remove attacker, defender survives with leftover power
+            wp_delete_post($army_id, true);
+            $winner_power = max(1, $defender_total - $attacker_total);
+            update_field('power', $winner_power, $defender_id);
+            // Remove attacker from local array, update defender power
+            $armies = array_values(array_filter($armies, fn($a) => $a['id'] !== $army_id));
+            foreach ($armies as &$a) {
+                if ($a['id'] === $defender_id) { $a['power'] = $winner_power; break; }
+            }
+            unset($a);
+            $combat = [
+                'result'          => 'defender_wins',
+                'attacker_roll'   => $attacker_roll,
+                'defender_roll'   => $defender_roll,
+                'attacker_total'  => $attacker_total,
+                'defender_total'  => $defender_total,
+                'winner_power'    => $winner_power,
+            ];
+        }
+    } else {
+        // No combat — move the army normally
+        hexcommand_set_json_field($army_id, 'position', ['q' => $q, 'r' => $r]);
+        foreach ($armies as &$a) {
+            if ($a['id'] === $army_id) { $a['q'] = $q; $a['r'] = $r; break; }
+        }
+        unset($a);
+    }
+
+    // Skip capture if attacker lost the combat (their army was deleted)
+    if ($combat !== null && $combat['result'] === 'defender_wins') {
+        hexcommand_set_json_field($post_id, 'player_setups', $setups);
+        $all_armies = hexcommand_get_armies_for_map($post_id, $user_id);
+        return new WP_REST_Response([
+            'success'     => true,
+            'armies'      => $all_armies,
+            'owned_tiles' => hexcommand_get_json_field($post_id, 'owned_tiles') ?: [],
+            'actions'     => $setups[$setup_idx]['actions'],
+            'user_id'     => $user_id,
+            'combat'      => $combat,
+        ], 200);
+    }
 
     // Capture adjacent tiles that are unowned and have no enemy army present
     $owned_tiles   = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
@@ -1138,11 +1273,19 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
         $owned_map[$t['q'] . ',' . $t['r']] = (int)($t['user_id'] ?? 0);
     }
 
-    // Build set of tiles occupied by enemy armies (after move)
+    // Build set of tiles protected by enemy armies (their tile + all adjacent tiles)
     $enemy_army_tiles = [];
     foreach ($armies as $a) {
-        if ((int)($a['user_id'] ?? 0) !== $user_id) {
-            $enemy_army_tiles[$a['q'] . ',' . $a['r']] = true;
+        if ($a['user_id'] !== $user_id) {
+            $eq = $a['q']; $er = $a['r'];
+            $enemy_army_tiles[$eq . ',' . $er] = true;
+            $e_parity  = $eq % 2;
+            $e_offsets = $e_parity === 0
+                ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
+                : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]];
+            foreach ($e_offsets as [$dq, $dr]) {
+                $enemy_army_tiles[($eq + $dq) . ',' . ($er + $dr)] = true;
+            }
         }
     }
 
@@ -1159,8 +1302,10 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
 
     foreach ($tiles_to_capture as [$tq, $tr]) {
         $key = $tq . ',' . $tr;
-        // Skip if already owned by anyone, or if an enemy army is present
-        if (isset($owned_map[$key]) || isset($enemy_army_tiles[$key])) continue;
+        // Skip if an enemy army is defending this tile
+        if (isset($enemy_army_tiles[$key])) continue;
+        // Skip if already owned by us
+        if (isset($owned_map[$key]) && $owned_map[$key] === $user_id) continue;
         // Skip water
         $terrain = null;
         foreach ($hexmap_data as $hex) {
@@ -1169,22 +1314,32 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
             }
         }
         if ($terrain === 'water' || $terrain === null) continue;
-        $owned_tiles[]  = ['q' => $tq, 'r' => $tr, 'user_id' => $user_id];
+        // Capture: overwrite enemy ownership or claim unowned tile
+        if (isset($owned_map[$key])) {
+            foreach ($owned_tiles as &$t) {
+                if ($t['q'] === $tq && $t['r'] === $tr) { $t['user_id'] = $user_id; break; }
+            }
+            unset($t);
+        } else {
+            $owned_tiles[] = ['q' => $tq, 'r' => $tr, 'user_id' => $user_id];
+        }
         $owned_map[$key] = $user_id;
     }
 
     // Deduct one action
     $setups[$setup_idx]['actions'] = $actions - 1;
 
-    hexcommand_set_json_field($post_id, 'armies',        $armies);
     hexcommand_set_json_field($post_id, 'owned_tiles',   $owned_tiles);
     hexcommand_set_json_field($post_id, 'player_setups', $setups);
 
+    $all_armies = hexcommand_get_armies_for_map($post_id, $user_id);
+
     return new WP_REST_Response([
         'success'     => true,
-        'armies'      => $armies,
+        'armies'      => $all_armies,
         'owned_tiles' => $owned_tiles,
         'actions'     => $setups[$setup_idx]['actions'],
         'user_id'     => $user_id,
+        'combat'      => $combat,
     ], 200);
 }

@@ -567,3 +567,11 @@ button:hover { background: #5c3d1a; }
 .chatbox-input:focus { border-color: #5c3d1a; }
 .chatbox-send { background: #3a2800; border: 1px solid #5c3d1a; color: #d4a843; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
 .chatbox-send:hover { background: #5a3800; }
+
+@keyframes city-pulse {
+  0%, 100% { opacity: 0.3; r: 9; }
+  50%       { opacity: 0.8; r: 12; }
+}
+.city-glow-ring--outer {
+  animation: city-pulse 1.4s ease-in-out infinite;
+}

@@ -19,6 +19,8 @@ const props = defineProps<{
   claimingMode?: boolean
   selectedArmyId?: number | null
   movingMode?: boolean
+  buyingArmyMode?: boolean
+  currentUserId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -34,10 +36,8 @@ function isSelected(q: number, r: number): boolean {
 }
 
 function tileOwnerColor(q: number, r: number): string | null {
-  // City hex
   const citySetup = (props.playerSetups ?? []).find(s => s.city_q === q && s.city_r === r)
   if (citySetup) return citySetup.color
-  // Owned tile
   const owned = (props.ownedTiles ?? []).find(t => t.q === q && t.r === r)
   if (owned) {
     const setup = (props.playerSetups ?? []).find(s => s.user_id === owned.user_id)
@@ -57,16 +57,21 @@ const validMoveTiles = computed<Set<string>>(() => {
   const q = army.q
   const r = army.r
   const colParity = q % 2
-  const offsets = colParity === 0
+  const offsets: [number, number][] = colParity === 0
     ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
     : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
 
-  // Collect enemy army positions so we can block those tiles
+  // Collect tiles protected by enemy armies (their tile + all adjacent tiles)
   const enemyArmyTiles = new Set<string>()
-  const selectedArmy = army
+  const OFFSETS_EVEN: [number,number][] = [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
+  const OFFSETS_ODD:  [number,number][] = [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
   for (const a of (props.armies ?? [])) {
-    if (a.user_id !== selectedArmy.user_id) {
+    if (a.user_id !== army.user_id) {
       enemyArmyTiles.add(`${a.q},${a.r}`)
+      const offsets = a.q % 2 === 0 ? OFFSETS_EVEN : OFFSETS_ODD
+      for (const [dq, dr] of offsets) {
+        enemyArmyTiles.add(`${a.q + dq},${a.r + dr}`)
+      }
     }
   }
 
@@ -85,9 +90,26 @@ function isValidMoveTile(q: number, r: number): boolean {
   return validMoveTiles.value.has(`${q},${r}`)
 }
 
+// Tiles where the current player can build an army (their own cities)
+const cityTiles = computed<Set<string>>(() => {
+  const result = new Set<string>()
+  if (!props.buyingArmyMode || props.currentUserId == null) return result
+  for (const s of (props.playerSetups ?? [])) {
+    if (s.user_id === props.currentUserId && s.city_q != null && s.city_r != null) {
+      result.add(`${s.city_q},${s.city_r}`)
+    }
+  }
+  return result
+})
+
+function isCityTile(q: number, r: number): boolean {
+  return cityTiles.value.has(`${q},${r}`)
+}
+
 function hexStroke(hex: Hex): string {
   if (isSelected(hex.q, hex.r)) return props.selectedBorderColor ?? '#FFD700'
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return '#00e5ff'
+  if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return '#FFD700'
   const ownerColor = tileOwnerColor(hex.q, hex.r)
   if (ownerColor) return ownerColor
   if (props.claimingMode) return '#ffffff33'
@@ -97,12 +119,14 @@ function hexStroke(hex: Hex): string {
 function hexStrokeWidth(hex: Hex): number {
   if (isSelected(hex.q, hex.r)) return 2
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 2
+  if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 2.5
   if (tileOwnerColor(hex.q, hex.r)) return 2
   return 0.8
 }
 
 function hexClass(hex: Hex): string {
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 'hex-move-target'
+  if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 'hex-city-target'
   if (props.claimingMode && !tileOwnerColor(hex.q, hex.r) && hex.terrain !== 'water') return 'hex-claimable'
   if (props.claimingMode && hex.terrain === 'water') return 'hex-no-claim'
   return ''
@@ -140,6 +164,35 @@ function armyColor(army: Army): string {
           />
         </g>
 
+        <!-- Buy-army glow rings around own cities -->
+        <g v-if="buyingArmyMode">
+          <template v-for="setup in (playerSetups ?? [])" :key="`glow-${setup.user_id}`">
+            <template v-if="setup.city_q != null && setup.city_r != null && setup.user_id === currentUserId">
+              <circle
+                :cx="hexCenter(setup.city_q, setup.city_r)[0]"
+                :cy="hexCenter(setup.city_q, setup.city_r)[1]"
+                r="11"
+                fill="none"
+                stroke="#FFD700"
+                stroke-width="2"
+                opacity="0.5"
+                class="city-glow-ring city-glow-ring--outer"
+                style="pointer-events: none"
+              />
+              <circle
+                :cx="hexCenter(setup.city_q, setup.city_r)[0]"
+                :cy="hexCenter(setup.city_q, setup.city_r)[1]"
+                r="7"
+                fill="#FFD70022"
+                stroke="#FFD700"
+                stroke-width="1.5"
+                class="city-glow-ring"
+                style="pointer-events: none"
+              />
+            </template>
+          </template>
+        </g>
+
         <!-- Player city markers -->
         <g v-for="setup in (playerSetups ?? [])" :key="`city-${setup.user_id}`">
           <template v-if="setup.city_q != null && setup.city_r != null">
@@ -151,7 +204,7 @@ function armyColor(army: Army): string {
               font-size="12"
               :fill="setup.color"
               style="pointer-events: none; user-select: none"
-            >🏰</text>
+            >🏰 <img :src="`/src/assets/img/town-${setup.randomUserId}.svg`" :alt="'city'" class="faction-icon" /></text>
           </template>
         </g>
 

@@ -148,10 +148,8 @@ const isMovingArmy    = ref(false)
 const selectedArmyId  = ref<number | null>(null)
 // Current user's full setup (with actions) from allPlayerSetups
 const mySetup = computed(() => {
-  if (!playerSetup.value) return null
-  const found = allPlayerSetups.value.find(s =>
-    s.city_q === playerSetup.value!.city_q && s.city_r === playerSetup.value!.city_r
-  )
+  if (!currentUserId.value) return null
+  const found = allPlayerSetups.value.find(s => s.user_id === currentUserId.value)
   return found ? { ...found } : null
 })
 const playerBorderColor = ref<string | null>(null)
@@ -273,6 +271,11 @@ function handleClickArmy(armyId: number) {
 
 async function handleBuyArmy(q: number, r: number) {
   if (!loadedMapStatus.value) return
+  const myCity = allPlayerSetups.value.find(s => s.user_id === currentUserId.value)
+  if (!myCity || myCity.city_q !== q || myCity.city_r !== r) {
+    showMsg('Armies can only be built on your city tile')
+    return
+  }
   try {
     await buyArmy(loadedMapStatus.value.uid, q, r)
     isBuyingArmy.value = false
@@ -283,10 +286,24 @@ async function handleBuyArmy(q: number, r: number) {
 async function handleMoveArmy(q: number, r: number) {
   if (!loadedMapStatus.value || selectedArmyId.value === null) return
   try {
-    await moveArmy(loadedMapStatus.value.uid, selectedArmyId.value, q, r)
-    selectedArmyId.value = null
-    isMovingArmy.value = false
-    showMsg('Army moved!')
+    const { combat } = await moveArmy(loadedMapStatus.value.uid, selectedArmyId.value, q, r)
+    if (combat) {
+      const won = combat.result === 'attacker_wins'
+      const yourRoll   = won ? combat.attacker_roll   : combat.defender_roll
+      const enemyRoll  = won ? combat.defender_roll   : combat.attacker_roll
+      const yourTotal  = won ? combat.attacker_total  : combat.defender_total
+      const enemyTotal = won ? combat.defender_total  : combat.attacker_total
+      if (won) {
+        showMsg(`⚔️ Victory! You rolled +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}). Army power: ${combat.winner_power}`)
+        // Keep army selected after winning so player can keep moving
+      } else {
+        showMsg(`💀 Defeated! You rolled +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}). Your army was destroyed.`)
+        selectedArmyId.value = null
+        isMovingArmy.value = false
+      }
+    } else {
+      showMsg('Army moved!')
+    }
   } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot move army') }
 }
 
@@ -441,6 +458,9 @@ onMounted(async () => {
           :claiming-mode="isClaiming"
           :selected-army-id="selectedArmyId"
           :moving-mode="isMovingArmy"
+          :buying-army-mode="isBuyingArmy"
+          :current-user-id="currentUserId"
+          :random-id ="currentUserRandomId"
           @click-hex="handleClickHex"
           @click-army="e => handleClickArmy(e.armyId)"
           @hover-hex="handleHoverHex"

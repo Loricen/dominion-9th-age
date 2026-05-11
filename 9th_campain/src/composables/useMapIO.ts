@@ -76,6 +76,7 @@ export interface PlayerSetup {
   color: string
   city_q: number
   city_r: number
+  randomUserId: number
 }
 
 export type UserRole = 'advanced_player' | 'player' | 'none'
@@ -424,7 +425,9 @@ export function useMapIO() {
     if (mySetup) mySetup.resources = json.resources
   }
 
-  async function moveArmy(uid: string, armyId: number, q: number, r: number): Promise<void> {
+  async function moveArmy(uid: string, armyId: number, q: number, r: number): Promise<{
+    combat: null | { result: string; attacker_roll: number; defender_roll: number; attacker_total: number; defender_total: number; winner_power: number }
+  }> {
     const res  = await fetch(`${WP_API}/maps/${uid}/moveArmy`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, q, r }),
     })
@@ -434,6 +437,7 @@ export function useMapIO() {
     ownedTiles.value  = json.owned_tiles ?? ownedTiles.value
     const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
     if (mySetup) mySetup.actions = json.actions
+    return { combat: json.combat ?? null }
   }
 
   async function claimTile(uid: string, q: number, r: number): Promise<void> {
@@ -496,7 +500,7 @@ export function useMapIO() {
 
   return {
     saveMsg, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
+    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,currentUserRandomId,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
     finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy,
