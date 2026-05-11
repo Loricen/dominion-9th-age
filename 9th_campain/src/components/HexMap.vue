@@ -460,7 +460,6 @@ onMounted(async () => {
           :moving-mode="isMovingArmy"
           :buying-army-mode="isBuyingArmy"
           :current-user-id="currentUserId"
-          :random-id ="currentUserRandomId"
           @click-hex="handleClickHex"
           @click-army="e => handleClickArmy(e.armyId)"
           @hover-hex="handleHoverHex"

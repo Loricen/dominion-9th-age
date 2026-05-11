@@ -500,7 +500,7 @@ export function useMapIO() {
 
   return {
     saveMsg, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,currentUserRandomId,
+    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
     finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy,
