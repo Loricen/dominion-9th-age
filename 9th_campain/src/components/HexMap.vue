@@ -27,10 +27,10 @@ const {
 } = useHexMap()
 
 const {
-  saveMsg, imageLoaded,
+  saveMsg, imageLoaded, popIn,
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
   userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
-  showMsg, checkAuth, downloadMap, saveToServer,
+  showMsg, checkAuth, downloadMap, saveToServer, showPopIn,
   loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, moveArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
@@ -607,35 +607,3 @@ onMounted(async () => {
     </div>
   </Transition>
 </template>
-
-<style scoped>
-.map-popin {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 320px;
-  max-width: 600px;
-  padding: 12px 40px 12px 18px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #fff;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 4px 24px #0008;
-  backdrop-filter: blur(4px);
-}
-.map-popin--info   { background: #1a2a3acc; border: 1px solid #4a90d9; }
-.map-popin--error  { background: #3a1a1acc; border: 1px solid #d94a4a; }
-.map-popin--battle { background: #2a1a0acc; border: 1px solid #d9904a; }
-.map-popin__close {
-  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-  background: none; border: none; color: #fff8; cursor: pointer; font-size: 13px; padding: 2px 4px;
-}
-.map-popin__close:hover { color: #fff; }
-.popin-enter-active, .popin-leave-active { transition: all 0.3s ease; }
-.popin-enter-from, .popin-leave-to { opacity: 0; transform: translateX(-50%) translateY(16px); }
-</style>
