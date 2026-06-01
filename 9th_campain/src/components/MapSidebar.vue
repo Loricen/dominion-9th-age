@@ -41,23 +41,6 @@ const showControls       = ref(true)
 
 <template>
   <aside class="sidebar">
-
-    <!-- Getting Started -->
-    <div class="panel import-hint" v-if="!imageLoaded">
-      <div class="panel-title">
-        Getting Started
-        <button @click="showGettingStarted = false">✕</button>
-      </div>
-      <p v-if="isAdvancedPlayer">
-        Use <strong>🎲 Generate</strong> for procedural maps, or
-        <strong>🗺️ Load Image</strong> to trace a reference image.
-      </p>
-      <p v-else>
-        Use <strong>🔑 Load by UID</strong> in the toolbar to load a map,
-        then request to join it.
-      </p>
-    </div>
-
     <!-- My Maps -->
     <div class="panel">
       <div class="panel-title" @click="showMaps = !showMaps">

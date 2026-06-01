@@ -50,6 +50,7 @@ export interface ChatMessage {
 
 export interface Army {
   id: number
+  name: string
   user_id: number
   hexmap: number
   power: number
@@ -79,7 +80,7 @@ export interface PlayerSetup {
   randomUserId: number
 }
 
-export type UserRole = 'advanced_player' | 'player' | 'none'
+export type UserRole = 'player' | 'none'
 
 const WP_API = '/wp-json/hexcommand/v1'
 
@@ -105,6 +106,7 @@ export function useMapIO() {
   const userMaps        = ref<MapListItem[]>([])
   const isLoggedIn      = ref(false)
   const userRole        = ref<UserRole>('none')
+  const credits         = ref<number>(0)
   const currentUserId   = ref<number>(0)
   const chatMessages    = ref<ChatMessage[]>([])
   const joinRequests    = ref<JoinRequest[]>([])
@@ -143,10 +145,11 @@ export function useMapIO() {
         const me = await res.json()
         isLoggedIn.value  = true
         userRole.value    = me.role as UserRole
+        credits.value     = me.credits ?? 0
         currentUserId.value = me.id ?? 0
         await refreshMapList()
         startHeartbeat()
-        if (userRole.value === 'advanced_player') {
+        if (userRole.value === 'player') {
           await refreshRequests()
           startRequestPolling()
         }
@@ -202,7 +205,9 @@ export function useMapIO() {
   function startHeartbeat() {
     if (heartbeatInterval) return
     sendHeartbeat()
-    heartbeatInterval = setInterval(sendHeartbeat, 30000)
+    heartbeatInterval = setInterval(() => {
+      sendHeartbeat()
+    }, 30000)
   }
 
   function startRequestPolling() {
@@ -232,10 +237,6 @@ export function useMapIO() {
     hexes: Hex[], cols: number, rows: number,
     size: MapSizeKey, name: string = 'Untitled Map'
   ): Promise<void> {
-    if (userRole.value !== 'advanced_player') {
-      showMsg('Only advanced players can save maps')
-      return
-    }
     const data: MapSave = {
       version: 1, cols, rows, size, name,
       hexes: hexes.map(h => ({ q: h.q, r: h.r, terrain: h.terrain }))
@@ -438,6 +439,16 @@ export function useMapIO() {
     if (mySetup) mySetup.resources = json.resources
   }
 
+  async function renameArmy(uid: string, armyId: number, name: string): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/renameArmy`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, name }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to rename army')
+    const army = armies.value.find(a => a.id === armyId)
+    if (army) army.name = json.name
+  }
+
   async function moveArmy(uid: string, armyId: number, q: number, r: number): Promise<{
     combat: null | { result: string; attacker_roll: number; defender_roll: number; attacker_total: number; defender_total: number; winner_power: number }
   }> {
@@ -512,11 +523,11 @@ export function useMapIO() {
   }
 
   return {
-    saveMsg, popIn, showPopIn, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
-    showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers,
+    saveMsg, popIn, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
+    uidCopied, userMaps, isLoggedIn, userRole, credits, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
+    showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers, showPopIn,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy,
+    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy, renameArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }

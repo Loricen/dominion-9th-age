@@ -27,16 +27,16 @@ const {
 } = useHexMap()
 
 const {
-  saveMsg, imageLoaded, popIn,
+  saveMsg, imageLoaded,popIn,
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
-  userMaps, isLoggedIn, userRole, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
-  showMsg, checkAuth, downloadMap, saveToServer, showPopIn,
-  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, moveArmy,
+  userMaps, isLoggedIn, userRole, credits, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, 
+  showMsg, checkAuth, downloadMap, saveToServer,showPopIn,
+  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, moveArmy, renameArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
 
-const { playTileClick, playTileCapture, playActionsReload, playJoinRequest, playGameStarts } = useSound()
+const { playTileClick, playTileCapture, playActionsReload, playJoinRequest, playGameStarts, playBattle } = useSound()
 
 // Play sound when new join requests arrive (owner only)
 watch(() => joinRequests.value.length, (newLen, oldLen) => {
@@ -54,12 +54,12 @@ watch(() => loadedMapStatus.value?.hexturn, (newTurn, oldTurn) => {
 })
 
 const {
-  zoom, panX, panY,
+  zoom, panX, panY, backVis,
   onWheel, onMouseDown, resetView, zoomIn, zoomOut,
 } = useMapView()
 
 // --- Computed state ---
-const isAdvancedPlayer = computed(() => userRole.value === 'advanced_player')
+const isAdvancedPlayer = computed(() => !!loadedMapStatus.value?.is_owner || appMode === 'create')
 const isOwner = computed(() => isAdvancedPlayer.value && userMaps.value.length > 0)
 
 const canEdit = computed(() =>
@@ -106,6 +106,13 @@ const showRightBar = computed(() =>
   loadedMapStatus.value?.mapStatus === 'ongoing' || loadedMapStatus.value?.mapStatus === 'started'
 )
 
+const appMode = (window as any).hexcommandMode ?? 'game'
+
+const filteredMaps = computed(() =>
+  appMode === 'create'
+    ? userMaps.value.filter(m => m.mapStatus === 'created')
+    : userMaps.value.filter(m => ['ongoing', 'started', 'ended'].includes(m.mapStatus!))
+)
 const setupLocked = computed(() =>
   loadedMapStatus.value?.mapStatus === 'started' || loadedMapStatus.value?.mapStatus === 'ended'
 )
@@ -288,16 +295,18 @@ async function handleMoveArmy(q: number, r: number) {
   try {
     const { combat } = await moveArmy(loadedMapStatus.value.uid, selectedArmyId.value, q, r)
     if (combat) {
+      playBattle()
       const won = combat.result === 'attacker_wins'
-      const yourRoll   = won ? combat.attacker_roll   : combat.defender_roll
-      const enemyRoll  = won ? combat.defender_roll   : combat.attacker_roll
-      const yourTotal  = won ? combat.attacker_total  : combat.defender_total
-      const enemyTotal = won ? combat.defender_total  : combat.attacker_total
+      const myFaction    = allPlayerSetups.value.find(s => s.user_id === currentUserId.value)?.faction ?? 'You'
+      const enemyFaction = allPlayerSetups.value.find(s => s.user_id !== currentUserId.value)?.faction ?? 'Enemy'
+      const yourRoll   = won ? combat.attacker_roll  : combat.defender_roll
+      const enemyRoll  = won ? combat.defender_roll  : combat.attacker_roll
+      const yourTotal  = won ? combat.attacker_total : combat.defender_total
+      const enemyTotal = won ? combat.defender_total : combat.attacker_total
       if (won) {
-        showMsg(`⚔️ Victory! You rolled +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}). Army power: ${combat.winner_power}`)
-        // Keep army selected after winning so player can keep moving
+        showPopIn(`⚔️ ${myFaction} defeated ${enemyFaction}! +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}) — Power left: ${combat.winner_power}`, 'battle')
       } else {
-        showMsg(`💀 Defeated! You rolled +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}). Your army was destroyed.`)
+        showPopIn(`💀 ${enemyFaction} repelled ${myFaction}! +${enemyRoll} (${enemyTotal}) vs +${yourRoll} (${yourTotal}) — Your army was destroyed.`, 'battle')
         selectedArmyId.value = null
         isMovingArmy.value = false
       }
@@ -373,8 +382,18 @@ async function handleDeny(map_uid: string, user_id: number) {
 }
 
 onMounted(async () => {
-  buildMapRandom()
   await checkAuth()
+
+  const params = new URLSearchParams(window.location.search)
+  const uid = params.get('uid')
+
+  if (appMode === 'game') {
+    if (uid) {
+      await handleLoadFromServer(uid)
+    }
+  } else {
+    buildMapRandom()
+  }
 })
 </script>
 
@@ -387,7 +406,7 @@ onMounted(async () => {
       :image-loaded="imageLoaded"
       :zoom="zoom"
       :is-advanced-player="isAdvancedPlayer"
-      :can-edit="canEdit"
+      :can-edit="canEdit && appMode === 'create'"
       :can-finish="canFinish"
       :can-start="canStart"
       :can-end="canEnd"
@@ -424,9 +443,9 @@ onMounted(async () => {
         :image-loaded="imageLoaded"
         :selected-size="selectedSize"
         :procedural-settings="proceduralSettings"
-        :user-maps="userMaps"
+        :user-maps="filteredMaps"
         :is-logged-in="isLoggedIn"
-        :is-advanced-player="canEdit"
+        :is-advanced-player="canEdit && appMode === 'create'"
         :map-players="loadedMapStatus?.players ?? []"
         :map-status="loadedMapStatus?.mapStatus ?? ''"
         :chat-messages="chatMessages"
@@ -460,6 +479,7 @@ onMounted(async () => {
           :moving-mode="isMovingArmy"
           :buying-army-mode="isBuyingArmy"
           :current-user-id="currentUserId"
+          :back-vis = "backVis"
           @click-hex="handleClickHex"
           @click-army="e => handleClickArmy(e.armyId)"
           @hover-hex="handleHoverHex"
@@ -487,6 +507,8 @@ onMounted(async () => {
         :is-claiming="isClaiming"
         :is-buying-army="isBuyingArmy"
         :is-moving-army="isMovingArmy"
+        :selected-army="isMovingArmy && selectedArmyId ? armies.find(a => a.id === selectedArmyId) ?? null : null"
+        @rename-army="(id, name) => loadedMapStatus && renameArmy(loadedMapStatus.uid, id, name)"
         @save-setup="handleSaveSetup"
         @start-city-select="isSelectingCity = true"
         @cancel-city-select="isSelectingCity = false"

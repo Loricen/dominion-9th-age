@@ -1,5 +1,4 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&display=swap');
-
 /* ============================================================
    SCROLLBAR
    ============================================================ */
@@ -597,6 +596,12 @@ button:hover { background: #5c3d1a; }
 .map-popin__close:hover { color: #fff; }
 .popin-enter-active, .popin-leave-active { transition: all 0.3s ease; }
 .popin-enter-from, .popin-leave-to { opacity: 0; transform: translateX(-50%) translateY(16px); }
+
+.army-name-row   { display: flex; align-items: center; gap: 6px; }
+.army-name-input { flex: 1; background: #1a2233; border: 1px solid #4a90d9; border-radius: 4px; color: #fff; padding: 3px 6px; font-size: 13px; }
+.btn-rename      { background: none; border: none; cursor: pointer; font-size: 13px; padding: 2px 4px; opacity: 0.7; }
+.btn-rename:hover { opacity: 1; }
+.army-power      { font-size: 20px; font-weight: 700; color: #ffba00; padding: 4px 0; }
 
 @keyframes city-pulse {
   0%, 100% { opacity: 0.3; r: 9; }

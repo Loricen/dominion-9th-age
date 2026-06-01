@@ -9,10 +9,12 @@ export function useMapView() {
   const panStartY = ref(0)
   const panOriginX = ref(0)
   const panOriginY = ref(0)
+  const backVis = ref<'hidden' | 'visible'>('hidden')
 
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     zoom.value = Math.min(5, Math.max(0.2, zoom.value * (e.deltaY > 0 ? 0.9 : 1.1)))
+    backVis.value = backVis.value === 'visible' ? 'hidden' : 'visible'
   }
 
   function onMouseDown(e: MouseEvent) {
@@ -44,10 +46,12 @@ export function useMapView() {
 
   function zoomIn() {
     zoom.value = Math.min(5, zoom.value + 0.1)
+    backVis.value = backVis.value === 'visible' ? 'hidden' : 'visible'
   }
 
   function zoomOut() {
     zoom.value = Math.max(0.2, zoom.value - 0.1)
+    backVis.value = backVis.value === 'visible' ? 'hidden' : 'visible'
   }
 
   onMounted(() => {
@@ -61,13 +65,7 @@ export function useMapView() {
   })
 
   return {
-    zoom,
-    panX,
-    panY,
-    onWheel,
-    onMouseDown,
-    resetView,
-    zoomIn,
-    zoomOut,
+    zoom, panX, panY, backVis,
+    onWheel, onMouseDown, resetView, zoomIn, zoomOut,
   }
 }

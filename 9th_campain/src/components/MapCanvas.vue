@@ -21,6 +21,7 @@ const props = defineProps<{
   movingMode?: boolean
   buyingArmyMode?: boolean
   currentUserId?: number | null
+  backVis ?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -47,15 +48,23 @@ function tileOwnerColor(q: number, r: number): string | null {
 }
 
 // Compute the set of valid move destinations when an army is selected
-// enemyArmyPositions: tiles directly occupied by an enemy army (battle targets, shown red)
+// enemyArmyPositions: enemy armies that sit on an adjacent valid move tile (battle targets, shown red)
 // validMoveTiles: all adjacent non-water tiles (including battle targets)
 const enemyArmyPositions = computed<Set<string>>(() => {
   const result = new Set<string>()
   if (!props.movingMode || props.selectedArmyId == null) return result
   const army = (props.armies ?? []).find(a => a.id === props.selectedArmyId)
   if (!army) return result
+  // Only flag if the enemy is on a tile adjacent to the selected army
+  const colParity = army.q % 2
+  const offsets: [number, number][] = colParity === 0
+    ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
+    : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
+  const adjacent = new Set(offsets.map(([dq, dr]) => `${army.q + dq},${army.r + dr}`))
   for (const a of (props.armies ?? [])) {
-    if (a.user_id !== army.user_id) result.add(`${a.q},${a.r}`)
+    if (a.user_id !== army.user_id && adjacent.has(`${a.q},${a.r}`)) {
+      result.add(`${a.q},${a.r}`)
+    }
   }
   return result
 })
@@ -156,7 +165,7 @@ function armyColor(army: Army): string {
         transformOrigin: '0 0'
       }"
     >
-      <svg v-if="hexes.length > 0" :width="getSvgW(cols)" :height="getSvgH(rows)">
+      <svg :style="`backface-visibility: ${backVis ?? 'visible'}`" v-if="hexes.length > 0" :width="getSvgW(cols)" :height="getSvgH(rows)" >
         <g v-for="hex in hexes" :key="`${hex.q}-${hex.r}`">
           <polygon
             :points="hexPoints(...hexCenter(hex.q, hex.r))"
@@ -226,15 +235,14 @@ function armyColor(army: Army): string {
               style="pointer-events: none"
             />
             <!-- Army icon -->
-            <text
-              :x="hexCenter(army.q, army.r)[0] + 4"
-              :y="hexCenter(army.q, army.r)[1] - 3"
-              text-anchor="middle"
-              dominant-baseline="middle"
-              font-size="6"
+            <image
+              :x="hexCenter(army.q, army.r)[0]-1"
+              :y="hexCenter(army.q, army.r)[1]-7"
+              width="10"
+              height="10"
+              :href="`/src/assets/img/army-1.svg`"
               style="user-select: none; cursor: pointer"
-              @click.stop="emit('clickArmy', { armyId: army.id })"
-            >⚔️</text>
+              @click.stop="emit('clickArmy', { armyId: army.id })" /> <!-- ${army.armyIcon} -->
             <!-- Player colour ring -->
             <circle
               :cx="hexCenter(army.q, army.r)[0] + 4"
@@ -248,7 +256,7 @@ function armyColor(army: Army): string {
           </template>
         </g>
       </svg>
-      <div v-else class="loading">Generating map...</div>
+      <div v-else class="loading">Loading...</div>
     </div>
   </div>
 </template>

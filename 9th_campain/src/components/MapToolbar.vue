@@ -122,7 +122,6 @@ function submitUidLoad() {
       <!-- Load options -->
       <div class="btn-group">
         <button v-if="canEdit" @click="jsonFileInput?.click()">📂 Load File</button>
-        <button @click="showUidLoad = !showUidLoad" :class="{ active: showUidLoad }">🔑 Load by UID</button>
       </div>
 
       <button @click="emit('resetView')">⌖ Center View</button>

@@ -17,7 +17,7 @@ const BORDER_COLORS = Object.freeze([
 </script>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { PlayerSetup, PlayerSetupWithId } from '@/composables/useMapIO'
 
 const props = defineProps<{
@@ -30,6 +30,7 @@ const props = defineProps<{
   isClaiming: boolean
   isBuyingArmy: boolean
   isMovingArmy: boolean
+  selectedArmy: import('@/composables/useMapIO').Army | null
 }>()
 
 const emit = defineEmits<{
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   toggleClaim: []
   toggleBuyArmy: []
   cancelMoveArmy: []
+  renameArmy: [id: number, name: string]
 }>()
 
 const selectedFaction  = ref(props.existingSetup?.faction   ?? '')
@@ -55,6 +57,9 @@ const cityLabel = computed(() => {
 })
 
 const isLocked = computed(() => props.mapStatus === 'started' || props.mapStatus === 'ended')
+const armyName    = ref('')
+const renamingArmy = ref(false)
+watch(() => props.selectedArmy, (a) => { armyName.value = a?.name ?? ''; renamingArmy.value = false }, { immediate: true })
 const myActions    = computed(() => props.existingSetup?.actions   ?? 0)
 const myResources  = computed(() => props.existingSetup?.resources ?? 0)
 const actionsMax = 10
@@ -105,6 +110,59 @@ function save() {
         <button class="btn-cancel" @click="emit('cancelCitySelect')">✕ Cancel</button>
       </div>
     </div>
+
+    <!-- ── Army panel — shown when an army is selected (must be before setupLocked) ── -->
+    <template v-else-if="isMovingArmy && selectedArmy">
+      <div class="rightbar-title">⚔️ Army Selected</div>
+
+      <!-- Faction -->
+      <div class="rb-section">
+        <div class="rb-label">Faction</div>
+        <div class="setup-value">{{ FACTIONS.find(f => f.id === existingSetup?.faction)?.label ?? existingSetup?.faction ?? '—' }}</div>
+      </div>
+
+      <!-- Army name + rename -->
+      <div class="rb-section">
+        <div class="rb-label">Army Name</div>
+        <div v-if="!renamingArmy" class="army-name-row">
+          <span class="setup-value">{{ selectedArmy.name }}</span>
+          <button class="btn-rename" @click="renamingArmy = true">✏️</button>
+        </div>
+        <div v-else class="army-name-row">
+          <input
+            v-model="armyName"
+            class="army-name-input"
+            maxlength="40"
+            @keydown.enter="emit('renameArmy', selectedArmy!.id, armyName); renamingArmy = false"
+            @keydown.escape="renamingArmy = false"
+            autofocus
+          />
+          <button class="btn-confirm" @click="emit('renameArmy', selectedArmy!.id, armyName); renamingArmy = false">✓</button>
+          <button class="btn-cancel" @click="renamingArmy = false">✕</button>
+        </div>
+      </div>
+
+      <!-- Strength -->
+      <div class="rb-section">
+        <div class="rb-label">Strength</div>
+        <div class="army-power">⚔️ {{ selectedArmy.power }}</div>
+      </div>
+
+      <!-- Actions -->
+      <div class="rb-section">
+        <div class="rb-label">Actions <span class="actions-count">{{ myActions }} / {{ actionsMax }}</span></div>
+        <div class="actions-gauge">
+          <div class="actions-fill"
+            :style="{ width: (myActions / actionsMax * 100) + '%', background: myActions > 3 ? '#4adf8a' : myActions > 0 ? '#ffba00' : '#df4a4a' }"
+          />
+        </div>
+      </div>
+
+      <!-- Finish move button -->
+      <button class="btn-claim active" style="margin-top: 12px" @click="emit('cancelMoveArmy')">
+        ✕ Finish Move
+      </button>
+    </template>
 
     <template v-else-if="setupLocked || isLocked">
       <div class="rightbar-title">⚔️ My Setup</div>
@@ -160,15 +218,6 @@ function save() {
         >
           {{ isBuyingArmy ? '✕ Cancel' : '⚔️ Buy Army (500)' }}
         </button>
-        <button
-          v-if="isMovingArmy"
-          class="btn-claim active"
-          style="margin-top: 6px"
-          @click="emit('cancelMoveArmy')"
-        >
-          ✕ Finish Move
-        </button>
-        <p v-if="isMovingArmy" class="rb-hint" style="margin-top:4px">Click an army ⚔️ on the map to select it, then click an adjacent tile to move.</p>
       </div>
     </template>
 
@@ -236,5 +285,15 @@ function save() {
       <p v-if="!canSave" class="rb-hint">Select a faction and a starting city to save.</p>
 
     </template>
-  </aside>
+  
+</aside>
+
 </template>
+
+<style scoped>
+.army-name-row   { display: flex; align-items: center; gap: 6px; }
+.army-name-input { flex: 1; background: #1a2233; border: 1px solid #4a90d9; border-radius: 4px; color: #fff; padding: 3px 6px; font-size: 13px; }
+.btn-rename      { background: none; border: none; cursor: pointer; font-size: 13px; padding: 2px 4px; opacity: 0.7; }
+.btn-rename:hover { opacity: 1; }
+.army-power      { font-size: 20px; font-weight: 700; color: #ffba00; padding: 4px 0; }
+</style>
