@@ -31,7 +31,7 @@ const {
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
   userMaps, isLoggedIn, userRole, credits, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, 
   showMsg, checkAuth, downloadMap, saveToServer,showPopIn,
-  loadFromServer, deleteFromServer, finishMap, startMap, endMap, nextTurn, endTurn, claimTile, buyArmy, moveArmy, renameArmy,
+  loadFromServer, deleteFromServer, finishMap, startMap, endMap, endTurn, claimTile, buyArmy, moveArmy, renameArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
@@ -95,13 +95,6 @@ const canEndTurn = computed(() =>
 
 const myTurnDone = computed(() => mySetup.value?.turn_done ?? false)
 
-const canNextTurn = computed(() =>
-  isAdvancedPlayer.value &&
-  loadedMapStatus.value !== null &&
-  loadedMapStatus.value.is_owner &&
-  loadedMapStatus.value.mapStatus === 'started'
-)
-
 const showRightBar = computed(() =>
   loadedMapStatus.value?.mapStatus === 'ongoing' || loadedMapStatus.value?.mapStatus === 'started'
 )
@@ -145,7 +138,6 @@ const showSaveModal     = ref(false)
 const pendingDeleteUid  = ref<string | null>(null)
 const showFinishConfirm = ref(false)
 const showStartConfirm  = ref(false)
-const showNextTurnConfirm = ref(false)
 const showEndConfirm    = ref(false)
 
 const isSelectingCity = ref(false)
@@ -341,13 +333,6 @@ async function handleEndTurn() {
   if (!loadedMapStatus.value) return
   try { await endTurn(loadedMapStatus.value.uid) }
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
-  showNextTurnConfirm.value = false
-}
-
-async function handleForceEndTurn() {
-  if (!loadedMapStatus.value) return
-  try { await nextTurn(loadedMapStatus.value.uid) }
-  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error advancing turn') }
 }
 
 async function handleSendChat(text: string) {
@@ -429,7 +414,6 @@ onMounted(async () => {
       @finish-map="showFinishConfirm = true"
       @start-game="showStartConfirm = true"
       @end-turn="handleEndTurn"
-      @force-end-turn="handleForceEndTurn"
       @end-game="showEndConfirm = true"
       @refresh-map="handleRefreshMap"
     />
@@ -575,18 +559,6 @@ onMounted(async () => {
         <div class="confirm-actions">
           <button class="btn-confirm" @click="confirmStart">⚔️ Start Game</button>
           <button class="btn-cancel" @click="showStartConfirm = false">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Next turn confirm -->
-    <div v-if="showNextTurnConfirm" class="modal-overlay" @click.self="showNextTurnConfirm = false">
-      <div class="confirm-modal">
-        <p>Advance to turn <strong>{{ (loadedMapStatus?.hexturn ?? 0) + 1 }}</strong>?</p>
-        <p class="confirm-hint">All player actions will be reset to 10.</p>
-        <div class="confirm-actions">
-          <button class="btn-confirm" @click="handleForceEndTurn">⏭ Next Turn</button>
-          <button class="btn-cancel" @click="showNextTurnConfirm = false">Cancel</button>
         </div>
       </div>
     </div>

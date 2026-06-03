@@ -4,10 +4,7 @@ if (!defined('ABSPATH')) exit;
 
 // Map creation shortcode — [hexcommand_create]
 add_shortcode('hexcommand_create', function () {
-    wp_enqueue_script('hexcommand-app', get_site_url() . '/9th_campain/assets/index.js', [], null, true);
-    wp_enqueue_style('hexcommand-style', get_site_url() . '/9th_campain/assets/index.css');
-    wp_localize_script('hexcommand-app', 'hexcommandNonce', wp_create_nonce('wp_rest'));
-    wp_localize_script('hexcommand-app', 'hexcommandMode', 'create');
+    hexcommand_enqueue('create');
     return '<div id="app"></div>';
 });
 
@@ -256,9 +253,6 @@ function hexcommand_join_map(WP_REST_Request $request): WP_REST_Response {
     if (in_array($user_id, $pending, true)) {
         return new WP_REST_Response(['error' => 'Request already pending'], 409);
     }
-    if (!hexcommand_deduct_credits($user_id, 10)) {
-        return new WP_REST_Response(['error' => 'Not enough credits (10 required to join a map)'], 402);
-    }
     array_push($pending, $user_id);
     hexcommand_set_json_field($post_id, 'pending_requests', $pending);
 
@@ -324,12 +318,15 @@ function hexcommand_approve_request(WP_REST_Request $request): WP_REST_Response 
     hexcommand_set_json_field($post_id, 'users_linked', $linked);
     hexcommand_set_json_field($post_id, 'pending_requests', $pending);
 
-    // Add map to requester's hex_linked text
+    // Add map to requester's hex_linked list
     $user_linked_maps = json_decode(get_user_meta($requester, 'hex_linked', true), true) ?: [];
     if (!in_array($post_id, $user_linked_maps, true)) {
         $user_linked_maps[] = $post_id;
         update_user_meta($requester, 'hex_linked', json_encode($user_linked_maps));
     }
+
+    // Deduct 10 credits from the approved player
+    hexcommand_deduct_credits($requester, 10);
 
     return new WP_REST_Response(['success' => true], 200);
 }
@@ -352,7 +349,8 @@ function hexcommand_deny_request(WP_REST_Request $request): WP_REST_Response {
     $pending = array_values(array_filter($pending, fn($id) => $id !== $requester));
 
     hexcommand_set_json_field($post_id, 'pending_requests', $pending);
-    
+
+    // No credits were deducted yet (deduction happens on approval), nothing to refund
 
     return new WP_REST_Response(['success' => true], 200);
 }

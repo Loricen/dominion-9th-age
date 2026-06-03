@@ -99,6 +99,7 @@ function hexcommand_claim_tile(WP_REST_Request $request): WP_REST_Response {
 function hexcommand_do_next_turn(int $post_id): WP_REST_Response {
     $hexturn     = ((int) get_field('hexturn', $post_id) ?: 0) + 1;
     update_field('hexturn', $hexturn, $post_id);
+    update_field('turn_started_at', time(), $post_id);
 
     $setups      = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
     $owned_tiles = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
@@ -667,3 +668,26 @@ function hexcommand_rename_army(WP_REST_Request $request): WP_REST_Response {
     return new WP_REST_Response(['success' => true, 'army_id' => $army_id, 'name' => $name], 200);
 }
 
+
+// ============================================================
+// CRON — auto force-turn after 16 hours
+// ============================================================
+add_action('hexcommand_check_turns', 'hexcommand_cron_check_turns');
+
+function hexcommand_cron_check_turns(): void {
+    $maps = get_posts([
+        'post_type'      => 'hexmap',
+        'posts_per_page' => -1,
+        'post_status'    => 'publish',
+        'meta_query'     => [['key' => 'hexmap_state', 'value' => 'started']],
+    ]);
+
+    $threshold = 16 * 3600; // 16 hours in seconds
+
+    foreach ($maps as $map) {
+        $started_at = (int) get_field('turn_started_at', $map->ID);
+        if ($started_at > 0 && (time() - $started_at) >= $threshold) {
+            hexcommand_do_next_turn($map->ID);
+        }
+    }
+}

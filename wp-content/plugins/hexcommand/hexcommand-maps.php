@@ -16,6 +16,28 @@ require_once plugin_dir_path(__FILE__) . 'includes/map-creation.php';
 require_once plugin_dir_path(__FILE__) . 'includes/game-mechanics.php';
 
 // ============================================================
+// CRON SCHEDULE
+// ============================================================
+add_filter('cron_schedules', function ($schedules) {
+    $schedules['hourly_hexcommand'] = [
+        'interval' => 3600,
+        'display'  => 'Every Hour (HexCommand)',
+    ];
+    return $schedules;
+});
+
+if (!wp_next_scheduled('hexcommand_check_turns')) {
+    wp_schedule_event(time(), 'hourly_hexcommand', 'hexcommand_check_turns');
+}
+
+// ============================================================
+// NEW USER REGISTRATION — grant 10 starter credits
+// ============================================================
+add_action('user_register', function (int $user_id): void {
+    update_field('credits', 10, 'user_' . $user_id);
+});
+
+// ============================================================
 // ADMIN MENU
 // ============================================================
 add_action('admin_menu', 'register_menu');
@@ -60,14 +82,27 @@ add_action('init', function () {
 // SHORTCODES
 // ============================================================
 
-// Current game shortcode — [hexcommand]
-add_shortcode('hexcommand', function () {
+// Shared enqueue helper — only injects config variables once per page
+function hexcommand_enqueue(string $mode): void {
     wp_enqueue_script('hexcommand-app', get_site_url() . '/9th_campain/assets/index.js', [], null, true);
     wp_enqueue_style('hexcommand-style', get_site_url() . '/9th_campain/assets/index.css');
-    wp_localize_script('hexcommand-app', 'hexcommandNonce', wp_create_nonce('wp_rest'));
-    wp_localize_script('hexcommand-app', 'hexcommandMode', 'game');
+    // Use wp_add_inline_script to avoid duplicate var declarations from wp_localize_script
+    if (!wp_script_is('hexcommand-app', 'done') && !defined('HEXCOMMAND_CONFIG_PRINTED')) {
+        define('HEXCOMMAND_CONFIG_PRINTED', true);
+        $config = json_encode([
+            'nonce' => wp_create_nonce('wp_rest'),
+            'mode'  => $mode,
+        ]);
+        wp_add_inline_script('hexcommand-app', "window.hexcommandNonce = {$config}['nonce']; window.hexcommandMode = {$config}['mode'];", 'before');
+    }
+}
+
+// Current game shortcode — [hexcommand]
+add_shortcode('hexcommand', function () {
+    hexcommand_enqueue('game');
     return '<div id="app"></div>';
 });
+
 
 
 // ============================================================
@@ -77,17 +112,23 @@ function hexcommand_is_logged_in(): bool {
     return is_user_logged_in();
 }
 
-function hexcommand_is_advanced_player(): bool {
-    $user = wp_get_current_user();
-    return array_intersect(['advanced_player', 'administrator'], (array) $user->roles) !== [];
+function hexcommand_get_role(): string {
+    if (!is_user_logged_in()) return 'none';
+    return 'player';
 }
 
-function hexcommand_get_role(): string {
-    $user  = wp_get_current_user();
-    $roles = (array) $user->roles;
-    if (array_intersect(['advanced_player', 'administrator'], $roles) !== []) return 'advanced_player';
-    if (in_array('player', $roles, true)) return 'player';
-    return 'none';
+// ============================================================
+// CREDITS HELPER
+// ============================================================
+function hexcommand_get_credits(int $user_id): int {
+    return (int) get_field('credits', 'user_' . $user_id);
+}
+
+function hexcommand_deduct_credits(int $user_id, int $amount): bool {
+    $current = hexcommand_get_credits($user_id);
+    if ($current < $amount) return false;
+    update_field('credits', $current - $amount, 'user_' . $user_id);
+    return true;
 }
 
 // ============================================================
@@ -153,7 +194,7 @@ add_action('rest_api_init', function () {
     register_rest_route('hexcommand/v1', '/maps', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_save_map',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})', [
         'methods'             => 'GET',
@@ -163,22 +204,22 @@ add_action('rest_api_init', function () {
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})', [
         'methods'             => 'DELETE',
         'callback'            => 'hexcommand_delete_map',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/finish', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_finish_map',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/start', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_start_map',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/end', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_end_map',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
 
     // ── Player join / setup ──────────────────────────────────
@@ -195,12 +236,12 @@ add_action('rest_api_init', function () {
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/approve/(?P<user_id>\d+)', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_approve_request',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/deny/(?P<user_id>\d+)', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_deny_request',
-        'permission_callback' => 'hexcommand_is_advanced_player',
+        'permission_callback' => 'hexcommand_is_logged_in',
     ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/setup', [
         'methods'             => 'POST',
@@ -231,11 +272,7 @@ add_action('rest_api_init', function () {
         'callback'            => 'hexcommand_end_turn',
         'permission_callback' => 'hexcommand_is_logged_in',
     ]);
-    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/nextturn', [
-        'methods'             => 'POST',
-        'callback'            => 'hexcommand_next_turn',
-        'permission_callback' => 'hexcommand_is_advanced_player',
-    ]);
+    // nextturn is handled automatically by cron after 16h
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/buyArmy', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_buy_army',

@@ -67,7 +67,7 @@ add_shortcode('hexcommand_mapslist', function () {
                     <th>Map</th>
                     <th>Status</th>
                     <th>Role</th>
-                    <th>Created</th>
+                    <th>Saved</th>
                     <th></th>
                 </tr>
             </thead>
