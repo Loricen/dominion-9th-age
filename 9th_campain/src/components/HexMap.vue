@@ -31,7 +31,7 @@ const {
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
   userMaps, isLoggedIn, userRole, credits, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, 
   showMsg, checkAuth, downloadMap, saveToServer,showPopIn,
-  loadFromServer, deleteFromServer, finishMap, startMap, endMap, endTurn, claimTile, buyArmy, moveArmy, renameArmy,
+  loadFromServer, deleteFromServer, finishMap, startMap, endTurn, resignMap, claimTile, buyArmy, moveArmy, renameArmy, upgradeArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
@@ -74,18 +74,9 @@ const canFinish = computed(() =>
   loadedMapStatus.value.mapStatus === 'created'
 )
 
-const canStart = computed(() => {
-  if (!loadedMapStatus.value?.is_owner) return false
-  if (loadedMapStatus.value.mapStatus !== 'ongoing') return false
-  const players = loadedMapStatus.value.players
-  if (players.length <= 1) return false  // need at least one other player
-  return players.every(p => allPlayerSetups.value.some(s => s.user_id === p.user_id))
-})
-
-const canEnd = computed(() =>
-  isAdvancedPlayer.value &&
+const canResign = computed(() =>
   loadedMapStatus.value !== null &&
-  loadedMapStatus.value.is_owner &&
+  (loadedMapStatus.value.is_owner || loadedMapStatus.value.is_linked) &&
   (loadedMapStatus.value.mapStatus === 'ongoing' || loadedMapStatus.value.mapStatus === 'started')
 )
 const canEndTurn = computed(() =>
@@ -118,9 +109,15 @@ const showJoinBanner = computed(() =>
 )
 
 // Ended overlay: anyone loading an ended map
+const hideEndedOverlay = ref(false)
 const showEndedOverlay = computed(() =>
-  loadedMapStatus.value !== null && loadedMapStatus.value.mapStatus ==='ended'
+  !hideEndedOverlay.value &&
+  loadedMapStatus.value !== null && loadedMapStatus.value.mapStatus === 'ended'
 )
+const winner = computed(() => {
+  const lastAlive = allPlayerSetups.value.find(s => !s.resigned)
+  return lastAlive?.faction ?? lastAlive?.user_id?.toString() ?? 'Unknown'
+})
 
 // Map status label for toolbar
 const mapStatus = computed(() => {
@@ -137,8 +134,7 @@ const loadedMapName     = ref('')
 const showSaveModal     = ref(false)
 const pendingDeleteUid  = ref<string | null>(null)
 const showFinishConfirm = ref(false)
-const showStartConfirm  = ref(false)
-const showEndConfirm    = ref(false)
+const showResignConfirm = ref(false)
 
 const isSelectingCity = ref(false)
 const isClaiming      = ref(false)
@@ -178,6 +174,7 @@ async function handleLoadFromServer(uid: string) {
     setHexes(data.hexes)
     if (data.size) selectedSize.value = data.size as MapSizeKey
     loadedMapName.value = data.name ?? uid
+    hideEndedOverlay.value = false
     showMsg(`Map "${data.name ?? uid}" loaded!`)
     await fetchChat(uid)
     if (playerSetup.value?.color) playerBorderColor.value = playerSetup.value.color
@@ -197,13 +194,6 @@ async function confirmDelete() {
   pendingDeleteUid.value = null
 }
 
-async function confirmStart() {
-  if (!loadedMapStatus.value) return
-  try { await startMap(loadedMapStatus.value.uid) }
-  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error starting game') }
-  showStartConfirm.value = false
-}
-
 async function confirmFinish() {
   if (!loadedMapStatus.value) return
   try { await finishMap(loadedMapStatus.value.uid) }
@@ -211,11 +201,11 @@ async function confirmFinish() {
   showFinishConfirm.value = false
 }
 
-async function confirmEnd() {
+async function confirmResign() {
   if (!loadedMapStatus.value) return
-  try { await endMap(loadedMapStatus.value.uid) }
-  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error ending game') }
-  showEndConfirm.value = false
+  try { await resignMap(loadedMapStatus.value.uid) }
+  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error resigning') }
+  showResignConfirm.value = false
 }
 
 function handleSizeChange(size: MapSizeKey) {
@@ -295,7 +285,15 @@ async function handleMoveArmy(q: number, r: number) {
       const enemyRoll  = won ? combat.defender_roll  : combat.attacker_roll
       const yourTotal  = won ? combat.attacker_total : combat.defender_total
       const enemyTotal = won ? combat.defender_total : combat.attacker_total
-      if (won) {
+      if (combat.city_combat) {
+        if (won) {
+          showPopIn(`🏰 ${myFaction} razed ${enemyFaction}'s city! +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}) — Power left: ${combat.winner_power}`, 'battle')
+        } else {
+          showPopIn(`🏰 ${enemyFaction}'s city repelled ${myFaction}! +${enemyRoll} (${enemyTotal}) vs +${yourRoll} (${yourTotal}) — Your army was destroyed.`, 'battle')
+          selectedArmyId.value = null
+          isMovingArmy.value = false
+        }
+      } else if (won) {
         showPopIn(`⚔️ ${myFaction} defeated ${enemyFaction}! +${yourRoll} (${yourTotal}) vs +${enemyRoll} (${enemyTotal}) — Power left: ${combat.winner_power}`, 'battle')
       } else {
         showPopIn(`💀 ${enemyFaction} repelled ${myFaction}! +${enemyRoll} (${enemyTotal}) vs +${yourRoll} (${yourTotal}) — Your army was destroyed.`, 'battle')
@@ -304,6 +302,10 @@ async function handleMoveArmy(q: number, r: number) {
       }
     } else {
       showMsg('Army moved!')
+    }
+    // Check if a player was auto-eliminated after the move
+    if (loadedMapStatus.value?.mapStatus === 'ended') {
+      showPopIn('🏁 The game has ended — all players have been eliminated or resigned.', 'battle')
     }
   } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot move army') }
 }
@@ -393,9 +395,8 @@ onMounted(async () => {
       :is-advanced-player="isAdvancedPlayer"
       :can-edit="canEdit && appMode === 'create'"
       :can-finish="canFinish"
-      :can-start="canStart"
-      :can-end="canEnd"
       :can-end-turn="canEndTurn"
+      :can-resign="canResign"
       :turn-done="myTurnDone"
       :hexturn="loadedMapStatus?.hexturn ?? 0"
       :map-status="mapStatus"
@@ -412,9 +413,8 @@ onMounted(async () => {
       @load-image="handleLoadImage"
       @size-change="handleSizeChange"
       @finish-map="showFinishConfirm = true"
-      @start-game="showStartConfirm = true"
       @end-turn="handleEndTurn"
-      @end-game="showEndConfirm = true"
+      @resign="showResignConfirm = true"
       @refresh-map="handleRefreshMap"
     />
 
@@ -474,9 +474,11 @@ onMounted(async () => {
         <!-- Ended overlay — inside canvas-wrapper, uses rgba NOT backdrop-filter -->
         <div v-if="showEndedOverlay" class="ended-overlay">
           <div class="ended-overlay__box">
-            <div class="ended-overlay__icon">⚔️</div>
+            <div class="ended-overlay__icon">🏆</div>
             <div class="ended-overlay__title">Game Over</div>
             <div class="ended-overlay__sub">{{ loadedMapName }} — this campaign has ended.</div>
+            <div class="ended-overlay__winner">🎖 Winner: <strong>{{ winner }}</strong></div>
+            <button class="ended-overlay__close" @click="hideEndedOverlay = true">Watch the map ›</button>
           </div>
         </div>
       </div>
@@ -493,6 +495,7 @@ onMounted(async () => {
         :is-moving-army="isMovingArmy"
         :selected-army="isMovingArmy && selectedArmyId ? armies.find(a => a.id === selectedArmyId) ?? null : null"
         @rename-army="(id, name) => loadedMapStatus && renameArmy(loadedMapStatus.uid, id, name)"
+        @upgrade-army="(id: number, res: number) => loadedMapStatus && upgradeArmy(loadedMapStatus.uid, id, res).catch((e: Error) => showMsg(e.message))"
         @save-setup="handleSaveSetup"
         @start-city-select="isSelectingCity = true"
         @cancel-city-select="isSelectingCity = false"
@@ -542,8 +545,9 @@ onMounted(async () => {
     <!-- Validate confirm -->
     <div v-if="showFinishConfirm" class="modal-overlay" @click.self="showFinishConfirm = false">
       <div class="confirm-modal">
-        <p>Validate and <strong>lock</strong> this map permanently?</p>
-        <p class="confirm-hint">This cannot be undone. Players will be able to join.</p>
+        <p>Valdiating will cost<strong>100</strong> Credits</p>
+        <p>This cannot be undone <strong>lock</strong> this map permanently?</p>
+        <p class="confirm-hint">Players will be able to join.</p>
         <div class="confirm-actions">
           <button class="btn-confirm" @click="confirmFinish">✅ Validate</button>
           <button class="btn-cancel" @click="showFinishConfirm = false">Cancel</button>
@@ -551,26 +555,14 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Start game confirm -->
-    <div v-if="showStartConfirm" class="modal-overlay" @click.self="showStartConfirm = false">
+    <!-- Resign confirm -->
+    <div v-if="showResignConfirm" class="modal-overlay" @click.self="showResignConfirm = false">
       <div class="confirm-modal">
-        <p>Start the game for <strong>{{ loadedMapName }}</strong>?</p>
-        <p class="confirm-hint">All players have chosen their starting city. This cannot be undone.</p>
+        <p>Resign from <strong>{{ loadedMapName }}</strong>?</p>
+        <p class="confirm-hint">You will forfeit all your territory. If all players resign, the game ends.</p>
         <div class="confirm-actions">
-          <button class="btn-confirm" @click="confirmStart">⚔️ Start Game</button>
-          <button class="btn-cancel" @click="showStartConfirm = false">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- End game confirm -->
-    <div v-if="showEndConfirm" class="modal-overlay" @click.self="showEndConfirm = false">
-      <div class="confirm-modal">
-        <p>End the game for <strong>{{ loadedMapName }}</strong>?</p>
-        <p class="confirm-hint">The map will be archived and marked as ended for all players.</p>
-        <div class="confirm-actions">
-          <button class="btn-danger" @click="confirmEnd">⚔️ End Game</button>
-          <button class="btn-cancel" @click="showEndConfirm = false">Cancel</button>
+          <button class="btn-danger" @click="confirmResign">🏳 Resign</button>
+          <button class="btn-cancel" @click="showResignConfirm = false">Cancel</button>
         </div>
       </div>
     </div>

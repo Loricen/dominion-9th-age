@@ -42,6 +42,7 @@ const emit = defineEmits<{
   toggleBuyArmy: []
   cancelMoveArmy: []
   renameArmy: [id: number, name: string]
+  upgradeArmy: [id: number, resources: number]
 }>()
 
 const selectedFaction  = ref(props.existingSetup?.faction   ?? '')
@@ -58,10 +59,20 @@ const cityLabel = computed(() => {
 
 const isLocked = computed(() => props.mapStatus === 'started' || props.mapStatus === 'ended')
 const armyName    = ref('')
-const renamingArmy = ref(false)
+const renamingArmy   = ref(false)
+const upgradingArmy  = ref(false)
+const upgradeAmount  = ref(10)
 watch(() => props.selectedArmy, (a) => { armyName.value = a?.name ?? ''; renamingArmy.value = false }, { immediate: true })
-const myActions    = computed(() => props.existingSetup?.actions   ?? 0)
-const myResources  = computed(() => props.existingSetup?.resources ?? 0)
+const myActions      = computed(() => props.existingSetup?.actions   ?? 0)
+const myResources    = computed(() => props.existingSetup?.resources ?? 0)
+const armyOnCity     = computed(() =>
+  props.selectedArmy !== null &&
+  props.existingSetup !== null &&
+  props.selectedArmy.q === props.existingSetup.city_q &&
+  props.selectedArmy.r === props.existingSetup.city_r
+)
+const upgradePowerGain = computed(() => Math.floor(upgradeAmount.value / 10))
+const upgradeMaxAmount = computed(() => Math.floor(myResources.value / 10) * 10)
 const actionsMax = 10
 
 const takenColors = computed(() =>
@@ -133,11 +144,11 @@ function save() {
             v-model="armyName"
             class="army-name-input"
             maxlength="40"
-            @keydown.enter="emit('renameArmy', selectedArmy!.id, armyName); renamingArmy = false"
+            @keydown.enter="emit('renameArmy', selectedArmy.id, armyName); renamingArmy = false"
             @keydown.escape="renamingArmy = false"
             autofocus
           />
-          <button class="btn-confirm" @click="emit('renameArmy', selectedArmy!.id, armyName); renamingArmy = false">✓</button>
+          <button class="btn-confirm" @click="emit('renameArmy', selectedArmy.id, armyName); renamingArmy = false">✓</button>
           <button class="btn-cancel" @click="renamingArmy = false">✕</button>
         </div>
       </div>
@@ -145,7 +156,42 @@ function save() {
       <!-- Strength -->
       <div class="rb-section">
         <div class="rb-label">Strength</div>
-        <div class="army-power">⚔️ {{ selectedArmy.power }}</div>
+        <div class="army-power-row">
+          <span class="army-power">⚔️ {{ selectedArmy.power }}</span>
+          <button
+            class="btn-upgrade"
+            :class="{ 'btn-upgrade--disabled': !armyOnCity || myResources < 10 }"
+            :title="!armyOnCity ? 'Army must be on your city to upgrade' : myResources < 10 ? 'Not enough resources' : 'Upgrade army'"
+            :disabled="!armyOnCity || myResources < 10"
+            @click="upgradingArmy = !upgradingArmy; upgradeAmount = Math.min(10, upgradeMaxAmount)"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" id="Capa_1" x="0px" y="0px" viewBox="0 0 800 800" style="enable-background:new 0 0 800 800;" xml:space="preserve">
+              <g>
+                <polygon class="st0" points="526.5,779 526.5,388.1 766.9,388.1 400.1,21 33,388.1 273.8,388.1 273.8,779   "/>
+              </g>
+            </svg></button>
+        </div>
+
+        <!-- Upgrade pop-in -->
+        <div v-if="upgradingArmy && armyOnCity" class="upgrade-popin">
+          <div class="upgrade-label">Resources to spend</div>
+          <div class="upgrade-row">
+            <input
+              v-model.number="upgradeAmount"
+              type="range"
+              :min="10"
+              :max="upgradeMaxAmount"
+              :step="10"
+              class="upgrade-slider"
+            />
+            <span class="upgrade-value">{{ upgradeAmount }}</span>
+          </div>
+          <div class="upgrade-result">+{{ upgradePowerGain }} strength → {{ selectedArmy.power + upgradePowerGain }}</div>
+          <div class="upgrade-actions">
+            <button class="btn-confirm" :disabled="upgradeAmount < 10" @click="emit('upgradeArmy', selectedArmy.id, upgradeAmount); upgradingArmy = false">✓ Confirm</button>
+            <button class="btn-cancel" @click="upgradingArmy = false">✕</button>
+          </div>
+        </div>
       </div>
 
       <!-- Actions -->
@@ -289,11 +335,3 @@ function save() {
 </aside>
 
 </template>
-
-<style scoped>
-.army-name-row   { display: flex; align-items: center; gap: 6px; }
-.army-name-input { flex: 1; background: #1a2233; border: 1px solid #4a90d9; border-radius: 4px; color: #fff; padding: 3px 6px; font-size: 13px; }
-.btn-rename      { background: none; border: none; cursor: pointer; font-size: 13px; padding: 2px 4px; opacity: 0.7; }
-.btn-rename:hover { opacity: 1; }
-.army-power      { font-size: 20px; font-weight: 700; color: #ffba00; padding: 4px 0; }
-</style>

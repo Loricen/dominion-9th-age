@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { type Hex, TERRAIN_COLOR, TERRAIN_BORDER, hexCenter, hexPoints, getSvgW, getSvgH } from '@/composables/useHexMap'
+import { type Hex, TERRAIN_COLOR, TERRAIN_BORDER, HEX_SIZE, hexCenter, hexPoints, getSvgW, getSvgH } from '@/composables/useHexMap'
 import type { PlayerSetupWithId, OwnedTile, Army } from '@/composables/useMapIO'
 
 const props = defineProps<{
@@ -117,13 +117,64 @@ function isCityTile(q: number, r: number): boolean {
   return cityTiles.value.has(`${q},${r}`)
 }
 
+// ── Terrain icons ────────────────────────────────────────────────────────
+const TERRAIN_ICON: Record<string, string> = {
+  plains:   'plain',
+  desert:   'desert',
+  swamp:    'swamp',
+  mountain: 'mount',
+  forest:   'tree',
+  water:    'water',
+}
+
+// Seeded pseudo-random so icons are stable per tile
+function seededRand(seed: number): () => number {
+  let s = seed
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff
+    return (s >>> 0) / 0xffffffff
+  }
+}
+
+interface TerrainIcon { x: number; y: number; size: number; opacity: number }
+
+function terrainIcons(q: number, r: number, terrain: string): TerrainIcon[] {
+  const file = TERRAIN_ICON[terrain]
+  if (!file) return []
+
+  const rand = seededRand(q * 73856093 ^ r * 19349663)
+
+  // Weighted count: 0→10%, 1→55%, 2→25%, 3→10%
+  const roll = rand()
+  const count = roll < 0.10 ? 0 : roll < 0.65 ? 1 : roll < 0.90 ? 2 : 3
+  if (count === 0) return []
+
+  const [cx, cy] = hexCenter(q, r)
+  // Spread area: keep icons inside the hex (radius ~8px from center)
+  const icons: TerrainIcon[] = []
+  const placed: Array<[number, number]> = []
+  for (let i = 0; i < count; i++) {
+    let x = 0, y = 0, tries = 0
+    do {
+      const angle = rand() * Math.PI * 2
+      const dist  = rand() * 7
+      x = cx + Math.cos(angle) * dist
+      y = cy + Math.sin(angle) * dist
+      tries++
+    } while (tries < 10 && placed.some(([px, py]) => Math.hypot(x - px, y - py) < 4))
+    placed.push([x, y])
+    const size    = 10 + rand() * 8   // 10–18px
+    const opacity = 1
+    icons.push({ x: x - size / 2, y: y - size / 2, size, opacity })
+  }
+  return icons
+}
+
 function hexStroke(hex: Hex): string {
   if (isSelected(hex.q, hex.r)) return props.selectedBorderColor ?? '#FFD700'
   if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return '#ff3333'
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return '#00e5ff'
   if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return '#FFD700'
-  const ownerColor = tileOwnerColor(hex.q, hex.r)
-  if (ownerColor) return ownerColor
   if (props.claimingMode) return '#ffffff33'
   return TERRAIN_BORDER[hex.terrain]
 }
@@ -133,8 +184,64 @@ function hexStrokeWidth(hex: Hex): number {
   if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return 2.5
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 2
   if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 2.5
-  if (tileOwnerColor(hex.q, hex.r)) return 2
   return 0.8
+}
+
+// ── Territory border edges ───────────────────────────────────────────────
+// For a flat-top hex, vertex i is at angle (60°*i - 30°), i.e. 30°,90°,150°,210°,270°,330°
+// Edge i connects vertex i and vertex (i+1)%6
+// Neighbour offsets for each edge (flat-top, offset cols) — even col / odd col
+const EDGE_NEIGHBORS_EVEN: [number, number][] = [
+  [1, -1], [1, 0], [0, 1], [-1, 0], [-1, -1], [0, -1]
+]
+const EDGE_NEIGHBORS_ODD: [number, number][] = [
+  [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [0, -1]
+]
+
+interface BorderEdge { x1: number; y1: number; x2: number; y2: number; color: string }
+
+function hexVertices(cx: number, cy: number): Array<[number, number]> {
+  const verts: Array<[number, number]> = []
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 180) * (60 * i - 60)
+    verts.push([cx + (HEX_SIZE - 1) * Math.cos(a), cy + (HEX_SIZE - 1) * Math.sin(a)])
+  }
+  return verts
+}
+
+function territoryBorderEdges(hex: Hex): BorderEdge[] {
+  const ownerColor = tileOwnerColor(hex.q, hex.r)
+  if (!ownerColor) return []
+
+  const ownerUserId = (() => {
+    const citySetup = (props.playerSetups ?? []).find(s => s.city_q === hex.q && s.city_r === hex.r)
+    if (citySetup) return citySetup.user_id
+    return (props.ownedTiles ?? []).find(t => t.q === hex.q && t.r === hex.r)?.user_id ?? null
+  })()
+  if (ownerUserId === null) return []
+
+  const offsets = hex.q % 2 === 0 ? EDGE_NEIGHBORS_EVEN : EDGE_NEIGHBORS_ODD
+  const [cx, cy] = hexCenter(hex.q, hex.r)
+  const verts = hexVertices(cx, cy)
+  const edges: BorderEdge[] = []
+
+  for (let i = 0; i < 6; i++) {
+    const [dq, dr] = offsets[i]!
+    const nq = hex.q + dq
+    const nr = hex.r + dr
+    // Check if neighbor is owned by the same player
+    const neighborOwner = (() => {
+      const citySetup = (props.playerSetups ?? []).find(s => s.city_q === nq && s.city_r === nr)
+      if (citySetup) return citySetup.user_id
+      return (props.ownedTiles ?? []).find(t => t.q === nq && t.r === nr)?.user_id ?? null
+    })()
+    if (neighborOwner !== ownerUserId) {
+      const [x1, y1] = verts[i]!
+      const [x2, y2] = verts[(i + 1) % 6]!
+      edges.push({ x1, y1, x2, y2, color: ownerColor })
+    }
+  }
+  return edges
 }
 
 function hexClass(hex: Hex): string {
@@ -165,7 +272,7 @@ function armyColor(army: Army): string {
         transformOrigin: '0 0'
       }"
     >
-      <svg :style="`backface-visibility: ${backVis ?? 'visible'}`" v-if="hexes.length > 0" :width="getSvgW(cols)" :height="getSvgH(rows)" >
+      <svg :style="`backface-visibility: ${backVis ?? 'visible'}`" v-if="hexes.length > 0" :width="getSvgW(cols)" :height="getSvgH(rows)">
         <g v-for="hex in hexes" :key="`${hex.q}-${hex.r}`">
           <polygon
             :points="hexPoints(...hexCenter(hex.q, hex.r))"
@@ -175,6 +282,29 @@ function armyColor(army: Army): string {
             :class="['hex-cell', hexClass(hex)]"
             @click="emit('clickHex', { q: hex.q, r: hex.r })"
             @mouseover="(e: MouseEvent) => emit('hoverHex', { e, q: hex.q, r: hex.r })"
+          />
+          <!-- Terrain decoration icons — sorted by y so lower icons render on top -->
+          <image
+            v-for="(icon, i) in [...terrainIcons(hex.q, hex.r, hex.terrain)].sort((a, b) => a.y - b.y)"
+            :key="`ti-${hex.q}-${hex.r}-${i}`"
+            :x="icon.x"
+            :y="icon.y"
+            :width="icon.size"
+            :height="icon.size"
+            :href="`/src/assets/img/${TERRAIN_ICON[hex.terrain]}.svg`"
+            :opacity="icon.opacity"
+            style="pointer-events: none"
+          />
+          <!-- Territory border edges -->
+          <line
+            v-for="(edge, ei) in territoryBorderEdges(hex)"
+            :key="`be-${hex.q}-${hex.r}-${ei}`"
+            :x1="edge.x1" :y1="edge.y1"
+            :x2="edge.x2" :y2="edge.y2"
+            :stroke="edge.color"
+            stroke-width="2"
+            stroke-linecap="round"
+            style="pointer-events: none"
           />
         </g>
 

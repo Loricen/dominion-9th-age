@@ -84,7 +84,6 @@ const showControls       = ref(true)
       <div class="collapsible" :class="{ collapsed: !showPlayers }">
         <div class="players-list">
           <div v-for="p in mapPlayers" :key="p.user_id" class="player-row">
-            <span class="player-icon">{{ p.is_owner ? '👑' : '⚔️' }}</span>
             <span class="player-name">{{ p.name }}</span>
             <span class="online-dot" :class="Date.now() / 1000 - p.last_seen < 30 ? 'online' : 'offline'" :title="Date.now() / 1000 - p.last_seen < 30 ? 'Online' : 'Offline'" /> 
             <span v-if="p.is_owner" class="player-tag">GM</span>

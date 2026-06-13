@@ -127,11 +127,11 @@ function updateWeight(terrain: string, v: string) {
     
     <!-- Terrain Brush — advanced_player only -->
     <div class="panel" v-if="isAdvancedPlayer">
-      <div class="collapsible" :class="{ collapsed: !showTerrain }">
+      <div>
         <div class="panel-title" @click="showTerrain = !showTerrain">
           🖌️ Terrain Brush <span class="chevron">{{ showTerrain ? '▲' : '▼' }}</span>
         </div>
-        <div v-if="showTerrain">
+        <div class="collapsible" :class="{ collapsed: !showTerrain }">
           <button
             v-for="t in TERRAIN_TYPES" :key="t"
             class="terrain-btn"

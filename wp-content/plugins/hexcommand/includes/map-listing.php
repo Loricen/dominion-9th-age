@@ -108,11 +108,11 @@ add_shortcode('hexcommand_mapslist', function () {
 // ============================================================
 function hexcommand_format_map(WP_Post $post, int $user_id = 0, $role_type = 'other'): array {
     if ($role_type == 'owner') {
-        $role_type = '👑 owner';
+        $role_type = 'Owner';
     } else {
         $linked_ids = json_decode(get_field('users_linked', $post->ID) ?: '[]', true) ?: [];
         $linked_ids = array_map('intval', $linked_ids);
-        $role_type  = in_array($user_id, $linked_ids, true) ? '⚔️ player' : '_ __';
+        $role_type  = in_array($user_id, $linked_ids, true) ? 'Player' : '_ __';
     }
     return [
         'hexmap_uid' => get_field('hexmap_uid', $post->ID),
@@ -120,7 +120,7 @@ function hexcommand_format_map(WP_Post $post, int $user_id = 0, $role_type = 'ot
         'size'       => get_post_meta($post->ID, '_hexmap_size', true),
         'savedAt'    => $post->post_date,
         'mapStatus'  => hexcommand_get_state($post->ID),
-        'is_owner'   => $role_type === 'owner',
+        'is_owner'   => $role_type === 'Owner',
         'role'       => $role_type,
     ];
 }

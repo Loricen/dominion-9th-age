@@ -188,6 +188,7 @@ export function useMapIO() {
           loadedMapStatus.value.players   = data.players      ?? []
           loadedMapStatus.value.mapStatus = data.mapStatus    ?? loadedMapStatus.value.mapStatus
           loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
+          loadedMapStatus.value.is_linked = data.is_linked    ?? loadedMapStatus.value.is_linked
           allPlayerSetups.value           = (data.player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
           ownedTiles.value = data.owned_tiles ?? []
           armies.value     = data.armies       ?? []
@@ -439,6 +440,17 @@ export function useMapIO() {
     if (mySetup) mySetup.resources = json.resources
   }
 
+  async function upgradeArmy(uid: string, armyId: number, resources: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/upgradeArmy`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, resources }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to upgrade army')
+    armies.value = json.armies ?? armies.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.resources = json.resources
+  }
+
   async function renameArmy(uid: string, armyId: number, name: string): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/renameArmy`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, name }),
@@ -450,7 +462,7 @@ export function useMapIO() {
   }
 
   async function moveArmy(uid: string, armyId: number, q: number, r: number): Promise<{
-    combat: null | { result: string; attacker_roll: number; defender_roll: number; attacker_total: number; defender_total: number; winner_power: number }
+    combat: null | { result: string; city_combat?: boolean; attacker_roll: number; defender_roll: number; attacker_total: number; defender_total: number; winner_power: number }
   }> {
     const res  = await fetch(`${WP_API}/maps/${uid}/moveArmy`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, q, r }),
@@ -461,6 +473,8 @@ export function useMapIO() {
     ownedTiles.value  = json.owned_tiles ?? ownedTiles.value
     const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
     if (mySetup) mySetup.actions = json.actions
+    if (json.mapStatus && loadedMapStatus.value) loadedMapStatus.value.mapStatus = json.mapStatus
+    if (json.player_setups) allPlayerSetups.value = (json.player_setups).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
     return { combat: json.combat ?? null }
   }
 
@@ -474,6 +488,16 @@ export function useMapIO() {
     // Update current player's actions count
     const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
     if (mySetup) mySetup.actions = json.actions
+  }
+
+  async function resignMap(uid: string): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/resign`, {
+      method: 'POST', headers: authHeaders(),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to resign')
+    if (loadedMapStatus.value) loadedMapStatus.value.mapStatus = json.mapStatus ?? loadedMapStatus.value.mapStatus
+    showMsg('You have resigned.')
   }
 
   async function endTurn(uid: string): Promise<void> {
@@ -527,7 +551,7 @@ export function useMapIO() {
     uidCopied, userMaps, isLoggedIn, userRole, credits, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers, showPopIn,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endMap, nextTurn, endTurn, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy, renameArmy,
+    finishMap, startMap, endTurn, resignMap, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy, renameArmy, upgradeArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }

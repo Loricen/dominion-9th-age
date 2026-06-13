@@ -182,7 +182,10 @@ function hexcommand_load_map(WP_REST_Request $request): WP_REST_Response {
         'rows'       => (int) get_post_meta($post_id, '_hexmap_rows', true),
         'size'       => get_post_meta($post_id, '_hexmap_size', true),
         'savedAt'    => $post->post_date,
-        'mapStatus'  => hexcommand_get_state($post->ID),
+        'mapStatus'  => (function() use ($post_id) {
+            hexcommand_maybe_auto_start($post_id);
+            return hexcommand_get_state($post_id);
+        })(),
         'hexturn'    => (int) get_field('hexturn', $post_id) ?: 0,
         'hexes'      => $hexes,
         'players'      => $players,
@@ -358,6 +361,37 @@ function hexcommand_deny_request(WP_REST_Request $request): WP_REST_Response {
 // ============================================================
 // SAVE PLAYER SETUP — linked player only
 // ============================================================
+// ============================================================
+// AUTO-START CHECK — call after any map poll
+// Starts the game if all players have cities and 30s have passed since last setup save
+// ============================================================
+function hexcommand_maybe_auto_start(int $post_id): bool {
+    if (hexcommand_get_state($post_id) !== 'ongoing') return false;
+
+    $last_setup_at = (int) get_field('last_setup_at', $post_id);
+    if ($last_setup_at === 0 || (time() - $last_setup_at) < 30) return false;
+
+    $linked_raw  = get_field('users_linked', $post_id);
+    $linked      = array_map('intval', json_decode($linked_raw ?: '[]', true) ?: []);
+    if (empty($linked)) return false; // need at least one other player
+
+    $all_players = array_merge([(int) get_post_field('post_author', $post_id)], $linked);
+    $setups      = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    $setup_map   = [];
+    foreach ($setups as $s) {
+        if (isset($s['city_q']) && $s['city_q'] !== null) {
+            $setup_map[(int)($s['user_id'] ?? 0)] = true;
+        }
+    }
+    foreach ($all_players as $pid) {
+        if (empty($setup_map[$pid])) return false;
+    }
+
+    update_field('hexmap_state', 'started', $post_id);
+    update_field('turn_started_at', time(), $post_id);
+    return true;
+}
+
 function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
     $uid     = strtoupper($request->get_param('uid'));
     $user_id = get_current_user_id();
@@ -410,8 +444,14 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
         'randomuserid' => $random_user_id
     ];
     hexcommand_set_json_field($post_id, 'player_setups', array_values($setups_map));
+    update_field('last_setup_at', time(), $post_id);
 
-    return new WP_REST_Response(['success' => true, 'user_id' => $user_id, 'randomuserid' => $random_user_id], 200);
+    return new WP_REST_Response([
+        'success'      => true,
+        'user_id'      => $user_id,
+        'randomuserid' => $random_user_id,
+        'mapStatus'    => hexcommand_get_state($post_id),
+    ], 200);
 }
 
 // ============================================================

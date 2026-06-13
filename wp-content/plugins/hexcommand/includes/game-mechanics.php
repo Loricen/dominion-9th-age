@@ -96,6 +96,53 @@ function hexcommand_claim_tile(WP_REST_Request $request): WP_REST_Response {
     ], 200);
 }
 
+// ============================================================
+// ELIMINATION CHECK — auto-resign players with no armies AND no city
+// Returns true if the game ended (all eliminated)
+// ============================================================
+function hexcommand_check_eliminations(int $post_id, array &$setups): bool {
+    $changed = false;
+    foreach ($setups as &$setup) {
+        if (!empty($setup['resigned'])) continue;
+        $player_id = (int)($setup['user_id'] ?? 0);
+        if (!$player_id) continue;
+
+        // Check if player still has a city
+        $has_city = !empty($setup['city_q']) || (isset($setup['city_q']) && $setup['city_q'] !== null);
+
+        // Check if player still has armies
+        $army_count = count(get_posts([
+            'post_type'      => 'army',
+            'posts_per_page' => 1,
+            'author'         => $player_id,
+            'meta_query'     => [['key' => 'hexmap', 'value' => $post_id]],
+            'fields'         => 'ids',
+        ]));
+
+        if (!$has_city && $army_count === 0) {
+            // Auto-resign: remove their tiles
+            $owned_tiles = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
+            $owned_tiles = array_values(array_filter($owned_tiles, fn($t) => (int)($t['user_id'] ?? 0) !== $player_id));
+            hexcommand_set_json_field($post_id, 'owned_tiles', $owned_tiles);
+            $setup['resigned'] = true;
+            $changed = true;
+        }
+    }
+    unset($setup);
+
+    if ($changed) {
+        hexcommand_set_json_field($post_id, 'player_setups', $setups);
+    }
+
+    // End game if only one (or zero) active players remain
+    $active = array_filter($setups, fn($s) => empty($s['resigned']));
+    if (count($active) <= 1) {
+        update_field('hexmap_state', 'ended', $post_id);
+        return true;
+    }
+    return false;
+}
+
 function hexcommand_do_next_turn(int $post_id): WP_REST_Response {
     $hexturn     = ((int) get_field('hexturn', $post_id) ?: 0) + 1;
     update_field('hexturn', $hexturn, $post_id);
@@ -206,11 +253,15 @@ function hexcommand_do_next_turn(int $post_id): WP_REST_Response {
     unset($setup);
     hexcommand_set_json_field($post_id, 'player_setups', $setups);
 
+    // Auto-resign any players with no city and no armies
+    $game_ended = hexcommand_check_eliminations($post_id, $setups);
+
     return new WP_REST_Response([
         'success'       => true,
         'all_done'      => true,
         'hexturn'       => $hexturn,
         'player_setups' => $setups,
+        'mapStatus'     => $game_ended ? 'ended' : hexcommand_get_state($post_id),
     ], 200);
 }
 
@@ -546,12 +597,72 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
             ];
         }
     } else {
-        // No combat — move the army normally
-        hexcommand_set_json_field($army_id, 'position', ['q' => $q, 'r' => $r]);
-        foreach ($armies as &$a) {
-            if ($a['id'] === $army_id) { $a['q'] = $q; $a['r'] = $r; break; }
+        // Check if destination is an enemy city
+        $city_combat    = null;
+        $enemy_city_idx = null;
+        foreach ($setups as $i => $s) {
+            if ((int)($s['user_id'] ?? 0) !== $user_id &&
+                (int)($s['city_q'] ?? -999) === $q &&
+                (int)($s['city_r'] ?? -999) === $r) {
+                $enemy_city_idx = $i;
+                break;
+            }
         }
-        unset($a);
+
+        if ($enemy_city_idx !== null) {
+            // City combat — city defends with 1500 base strength
+            $attacker_power  = 0;
+            foreach ($armies as $a) {
+                if ($a['id'] === $army_id) { $attacker_power = $a['power']; break; }
+            }
+            $city_strength   = 1500;
+            $attacker_roll   = rand(1, 100);
+            $defender_roll   = rand(1, 150);
+            $attacker_total  = $attacker_power + $attacker_roll;
+            $defender_total  = $city_strength + $defender_roll;
+
+            if ($attacker_total >= $defender_total) {
+                // Attacker wins — destroy the enemy city, move army in
+                $winner_power = max(1, $attacker_total - $defender_total);
+                update_field('power', $winner_power, $army_id);
+                $setups[$enemy_city_idx]['city_q'] = null;
+                $setups[$enemy_city_idx]['city_r'] = null;
+                hexcommand_set_json_field($army_id, 'position', ['q' => $q, 'r' => $r]);
+                foreach ($armies as &$a) {
+                    if ($a['id'] === $army_id) { $a['q'] = $q; $a['r'] = $r; $a['power'] = $winner_power; break; }
+                }
+                unset($a);
+                $combat = [
+                    'result'         => 'attacker_wins',
+                    'city_combat'    => true,
+                    'attacker_roll'  => $attacker_roll,
+                    'defender_roll'  => $defender_roll,
+                    'attacker_total' => $attacker_total,
+                    'defender_total' => $defender_total,
+                    'winner_power'   => $winner_power,
+                ];
+            } else {
+                // Defender wins — army is destroyed
+                wp_delete_post($army_id, true);
+                $armies = array_values(array_filter($armies, fn($a) => $a['id'] !== $army_id));
+                $combat = [
+                    'result'         => 'defender_wins',
+                    'city_combat'    => true,
+                    'attacker_roll'  => $attacker_roll,
+                    'defender_roll'  => $defender_roll,
+                    'attacker_total' => $attacker_total,
+                    'defender_total' => $defender_total,
+                    'winner_power'   => $city_strength + $defender_roll - $attacker_total,
+                ];
+            }
+        } else {
+            // No combat — move the army normally
+            hexcommand_set_json_field($army_id, 'position', ['q' => $q, 'r' => $r]);
+            foreach ($armies as &$a) {
+                if ($a['id'] === $army_id) { $a['q'] = $q; $a['r'] = $r; break; }
+            }
+            unset($a);
+        }
     }
 
     // Skip capture if attacker lost the combat (their army was deleted)
@@ -634,6 +745,9 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
     hexcommand_set_json_field($post_id, 'owned_tiles',   $owned_tiles);
     hexcommand_set_json_field($post_id, 'player_setups', $setups);
 
+    // Auto-resign any players with no city and no armies
+    $game_ended = hexcommand_check_eliminations($post_id, $setups);
+
     $all_armies = hexcommand_get_armies_for_map($post_id, $user_id);
 
     return new WP_REST_Response([
@@ -643,6 +757,7 @@ function hexcommand_move_army(WP_REST_Request $request): WP_REST_Response {
         'actions'     => $setups[$setup_idx]['actions'],
         'user_id'     => $user_id,
         'combat'      => $combat,
+        'mapStatus'   => $game_ended ? 'ended' : hexcommand_get_state($post_id),
     ], 200);
 }
 
@@ -690,4 +805,122 @@ function hexcommand_cron_check_turns(): void {
             hexcommand_do_next_turn($map->ID);
         }
     }
+}
+
+// ============================================================
+// UPGRADE ARMY — spend resources to increase army power
+// army must be on the player's city tile; 10 resources = 1 power
+// ============================================================
+function hexcommand_upgrade_army(WP_REST_Request $request): WP_REST_Response {
+    $body      = $request->get_json_params();
+    $uid       = $request->get_param('uid');
+    $user_id   = get_current_user_id();
+    $army_id   = isset($body['army_id'])  ? intval($body['army_id'])  : null;
+    $resources = isset($body['resources']) ? intval($body['resources']) : null;
+
+    if (!$army_id || !$resources || $resources < 10 || $resources % 10 !== 0) {
+        return new WP_REST_Response(['error' => 'Invalid parameters (resources must be a multiple of 10)'], 400);
+    }
+
+    $post = hexcommand_find_post_by_uid($uid);
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+    $post_id = $post->ID;
+
+    // Find player setup
+    $setups    = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    $setup_idx = null;
+    foreach ($setups as $i => $s) {
+        if ((int)($s['user_id'] ?? 0) === $user_id) { $setup_idx = $i; break; }
+    }
+    if ($setup_idx === null) return new WP_REST_Response(['error' => 'No setup found'], 409);
+
+    // Check player has enough resources
+    $current_resources = (int)($setups[$setup_idx]['resources'] ?? 0);
+    if ($current_resources < $resources) {
+        return new WP_REST_Response(['error' => 'Not enough resources'], 409);
+    }
+
+    // Verify army ownership
+    $army_post = get_post($army_id);
+    if (!$army_post || $army_post->post_type !== 'army') {
+        return new WP_REST_Response(['error' => 'Army not found'], 404);
+    }
+    if ((int) $army_post->post_author !== $user_id) {
+        return new WP_REST_Response(['error' => 'Not your army'], 403);
+    }
+
+    // Verify army is on the player's city tile
+    $city_q = (int)($setups[$setup_idx]['city_q'] ?? -999);
+    $city_r = (int)($setups[$setup_idx]['city_r'] ?? -999);
+    $pos    = hexcommand_get_json_field($army_id, 'position') ?: [];
+    if ((int)($pos['q'] ?? -1) !== $city_q || (int)($pos['r'] ?? -1) !== $city_r) {
+        return new WP_REST_Response(['error' => 'Army must be on your city tile to upgrade'], 409);
+    }
+
+    // Apply upgrade
+    $power_gain  = intdiv($resources, 10);
+    $new_power   = (int) get_field('power', $army_id) + $power_gain;
+    update_field('power', $new_power, $army_id);
+
+    $setups[$setup_idx]['resources'] = $current_resources - $resources;
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+
+    return new WP_REST_Response([
+        'success'   => true,
+        'armies'    => hexcommand_get_armies_for_map($post_id, $user_id),
+        'resources' => $setups[$setup_idx]['resources'],
+        'user_id'   => $user_id,
+    ], 200);
+}
+
+// ============================================================
+// RESIGN — player forfeits their territory; game ends when all resign
+// ============================================================
+function hexcommand_resign(WP_REST_Request $request): WP_REST_Response {
+    $uid     = $request->get_param('uid');
+    $user_id = get_current_user_id();
+
+    $post = hexcommand_find_post_by_uid($uid);
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+    $post_id = $post->ID;
+
+    $state = hexcommand_get_state($post_id);
+    if (!in_array($state, ['ongoing', 'started'], true)) {
+        return new WP_REST_Response(['error' => 'Game is not active'], 409);
+    }
+
+    // Mark player as resigned in their setup
+    $setups    = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    $setup_idx = null;
+    foreach ($setups as $i => $s) {
+        if ((int)($s['user_id'] ?? 0) === $user_id) { $setup_idx = $i; break; }
+    }
+    if ($setup_idx === null) return new WP_REST_Response(['error' => 'No setup found'], 409);
+
+    $setups[$setup_idx]['resigned'] = true;
+
+    // Remove all their owned tiles
+    $owned_tiles = hexcommand_get_json_field($post_id, 'owned_tiles') ?: [];
+    $owned_tiles = array_values(array_filter($owned_tiles, fn($t) => (int)($t['user_id'] ?? 0) !== $user_id));
+    hexcommand_set_json_field($post_id, 'owned_tiles', $owned_tiles);
+
+    // Delete all their armies
+    $army_posts = get_posts([
+        'post_type'      => 'army',
+        'posts_per_page' => -1,
+        'author'         => $user_id,
+        'meta_query'     => [['key' => 'hexmap', 'value' => $post_id]],
+    ]);
+    foreach ($army_posts as $ap) wp_delete_post($ap->ID, true);
+
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+
+    // End the game if only one (or zero) active players remain
+    $active_players = array_filter($setups, fn($s) => empty($s['resigned']));
+    if (count($active_players) <= 1) {
+        update_field('hexmap_state', 'ended', $post_id);
+        return new WP_REST_Response(['success' => true, 'mapStatus' => 'ended'], 200);
+    }
+
+    return new WP_REST_Response(['success' => true, 'mapStatus' => $state], 200);
 }

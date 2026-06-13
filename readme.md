@@ -53,7 +53,7 @@ Assets:
 
 ```
 /9th_campain/assets/index.js
-/9th_campain/assets/index.css
+/9th_campain/assets/style.css
 ```
 
 ---

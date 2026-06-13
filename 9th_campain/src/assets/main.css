@@ -53,10 +53,12 @@
 .collapsed   { max-height: 0; }
 .collapsible .panel-title {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 0; padding-bottom: 0; border-bottom: none; user-select: none;
+  margin-bottom: 0; padding-bottom: 0; border-bottom: none; user-select: none; line-height: 1.75em;
 }
 .collapsible:hover .panel-title { color: #d4a843; }
-.chevron { font-size: 0.6rem; float: right; }
+.collapsible .panel-title img{ padding-right:0.5rem;}
+.chevron { font-size: 0.6rem; float: right; padding-left: 1rem;}
+.panel-title .chevron {padding-left: 0;}
 
 /* ============================================================
    GETTING STARTED
@@ -549,7 +551,7 @@ button:hover { background: #5c3d1a; }
   display: flex; flex-direction: column; gap: 6px;
   scrollbar-width: thin; max-height:280px}
 .chatbox-messages.collapsed{padding-top:0; padding-bottom:0; max-height:0}
-.chatbox-header .move-cross{cursor: move; margin-left: 1rem; font-size:0; width:29px; height: 29px; background:url("https://dominion.aerolith-models.com/src/assets/img/move-object.svg") center no-repeat; background-size:contain;}
+.chatbox-header .move-cross{cursor: move; margin-right: 1rem; font-size:0; width:18px; height: 18px;  display: inline-block; background:url("https://dominion.aerolith-models.com/src/assets/img/move-object.svg") center no-repeat; background-size:contain;}
 .chatbox-empty { font-size: 0.75rem; color: #3d2a10; font-style: italic; text-align: center; padding: 12px 0; }
 .chatbox-msg   { display: flex; flex-direction: column; gap: 2px; }
 .chatbox-meta  { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; }
@@ -602,6 +604,45 @@ button:hover { background: #5c3d1a; }
 .btn-rename      { background: none; border: none; cursor: pointer; font-size: 13px; padding: 2px 4px; opacity: 0.7; }
 .btn-rename:hover { opacity: 1; }
 .army-power      { font-size: 20px; font-weight: 700; color: #ffba00; padding: 4px 0; }
+
+.army-power-row  { display: flex; align-items: center; gap: 8px; }
+.btn-upgrade     { background: #1a3a1a; border-radius: 4px; fill: #4adf8a; cursor: pointer; font-size: 18px; padding: 2px 7px; }
+.btn-upgrade:hover:not(:disabled) { background: #2a5a2a; }
+.btn-upgrade--disabled { background: #1a1a1a; fill: #555; cursor: not-allowed; }
+.btn-upgrade svg {width:16px;}
+.upgrade-popin   { margin-top: 8px; background: #1a2233; border: 1px solid #4a90d9; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.upgrade-label   { font-size: 12px; color: #aac4e8; }
+.upgrade-row     { display: flex; align-items: center; gap: 8px; }
+.upgrade-slider  { flex: 1; accent-color: #4adf8a; }
+.upgrade-value   { font-weight: 700; color: #4adf8a; min-width: 32px; text-align: right; }
+.upgrade-result  { font-size: 13px; color: #ffba00; }
+.upgrade-actions { display: flex; gap: 6px; margin-top: 2px; }
+.st0{fill:currentColor;}
+
+
+/* ============================================================
+ending screen
+============================================================ */
+.ended-overlay__winner {
+  font-size: 18px;
+  color: #ffd700;
+  margin: 12px 0 16px;
+}
+.ended-overlay__winner strong {
+  font-size: 22px;
+}
+.ended-overlay__close {
+  margin-top: 4px;
+  background: #1a3a5a;
+  border: 1px solid #4a90d9;
+  border-radius: 8px;
+  color: #88b5f1;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 8px 20px;
+  transition: background 0.2s;
+}
+.ended-overlay__close:hover { background: #2a4a7a; color: #fff; }
 
 @keyframes city-pulse {
   0%, 100% { opacity: 0.3; r: 9; }

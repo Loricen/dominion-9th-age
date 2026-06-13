@@ -11,8 +11,7 @@ const props = defineProps<{
   isAdvancedPlayer: boolean
   canEdit: boolean
   canFinish: boolean
-  canStart: boolean
-  canEnd: boolean
+  canResign: boolean
   canEndTurn: boolean
   turnDone: boolean
   hexturn: number
@@ -27,8 +26,6 @@ const emit = defineEmits<{
   downloadMap: []
   saveToServer: []
   finishMap: []
-  startGame: []
-  endGame: []
   zoomIn: []
   zoomOut: []
   loadMap: [file: File]
@@ -38,6 +35,7 @@ const emit = defineEmits<{
   refreshMap: []
   endTurn: []
   forceEndTurn: []
+  resign: []
 }>()
 
 const jsonFileInput  = ref<HTMLInputElement | null>(null)
@@ -103,8 +101,8 @@ function submitUidLoad() {
       </button>
 
       <!-- End Game — owner, finished, not yet ended -->
-      <button v-if="canStart" class="btn-start" @click="emit('startGame')">
-        ⚔️ Start Game
+      <button v-if="canResign ?? false" class="btn-end" @click="emit('resign')">
+        🏳 Resign
       </button>
       <template v-if="canEndTurn">
         <button v-if="!turnDone" class="btn-nextturn" @click="emit('endTurn')" :title="`Current turn: ${hexturn}`">
@@ -112,12 +110,6 @@ function submitUidLoad() {
         </button>
         <span v-else class="turn-waiting">⏳ Waiting… <span class="turn-badge">{{ hexturn }}</span></span>
       </template>
-      <button v-if="allowSkipTurn !==null && allowSkipTurn && canEndTurn" class="btn-nextturn" @click="emit('forceEndTurn')" :title="`Current turn: ${hexturn}`">
-        ⏹ Force Next Turn
-      </button>
-      <button v-if="canEnd" class="btn-end" @click="emit('endGame')">
-        💀 End Game
-      </button>
 
       <!-- Load options -->
       <div class="btn-group">
