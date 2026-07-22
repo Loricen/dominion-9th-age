@@ -16,6 +16,7 @@ export interface MapSave {
   mapStatus?: string
   players?: MapPlayer[]
   hexes: Hex[]
+  last_setup_at?: number
 }
 
 export interface MapListItem {
@@ -78,6 +79,7 @@ export interface PlayerSetup {
   city_q: number
   city_r: number
   randomUserId: number
+  resigned : boolean
 }
 
 export type UserRole = 'player' | 'none'
@@ -123,6 +125,7 @@ export function useMapIO() {
     mapStatus?: string
     hexturn: number
     players: MapPlayer[]
+    last_setup_at: number
   } | null>(null)
 
   let requestsPollInterval: ReturnType<typeof setInterval> | null = null
@@ -188,7 +191,8 @@ export function useMapIO() {
           loadedMapStatus.value.players   = data.players      ?? []
           loadedMapStatus.value.mapStatus = data.mapStatus    ?? loadedMapStatus.value.mapStatus
           loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
-          loadedMapStatus.value.is_linked = data.is_linked    ?? loadedMapStatus.value.is_linked
+          loadedMapStatus.value.is_linked     = data.is_linked     ?? loadedMapStatus.value.is_linked
+          loadedMapStatus.value.last_setup_at = data.last_setup_at ?? loadedMapStatus.value.last_setup_at
           allPlayerSetups.value           = (data.player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
           ownedTiles.value = data.owned_tiles ?? []
           armies.value     = data.armies       ?? []
@@ -261,6 +265,7 @@ export function useMapIO() {
         mapStatus:   'created',
         hexturn:     0,
         players:     [],
+        last_setup_at: 0
       }
       await refreshMapList()
     } catch (err) {
@@ -284,7 +289,8 @@ export function useMapIO() {
       is_owner:    data.is_owner    ?? false,
       is_linked:   data.is_linked   ?? false,
       is_pending:  data.is_pending  ?? false,
-      mapStatus:   data.mapStatus ?? 'created',
+      mapStatus:       data.mapStatus ?? 'created',
+      last_setup_at:   data.last_setup_at ?? 0,
       hexturn:     data.hexturn   ?? 0,
       players:     data.players     ?? [],
     }
@@ -397,6 +403,7 @@ export function useMapIO() {
     const idx = allPlayerSetups.value.findIndex(s => s.user_id === userId)
     if (idx >= 0) allPlayerSetups.value[idx] = setupWithId
     else allPlayerSetups.value.push(setupWithId)
+    if (loadedMapStatus.value) loadedMapStatus.value.last_setup_at = Math.floor(Date.now() / 1000)
     showMsg('Setup saved!')
   }
 

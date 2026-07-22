@@ -119,12 +119,12 @@ function isCityTile(q: number, r: number): boolean {
 
 // ── Terrain icons ────────────────────────────────────────────────────────
 const TERRAIN_ICON: Record<string, string> = {
-  plains:   'plain',
-  desert:   'desert',
-  swamp:    'swamp',
-  mountain: 'mount',
-  forest:   'tree',
-  water:    'water',
+  plains:   'HillsGreen',
+  desert:   'Desert',
+  swamp:    'Swamp',
+  mountain: 'Mountains',
+  forest:   'Woods',
+  water:    'Water',
 }
 
 // Seeded pseudo-random so icons are stable per tile
@@ -285,15 +285,12 @@ function armyColor(army: Army): string {
           />
           <!-- Terrain decoration icons — sorted by y so lower icons render on top -->
           <image
-            v-for="(icon, i) in [...terrainIcons(hex.q, hex.r, hex.terrain)].sort((a, b) => a.y - b.y)"
-            :key="`ti-${hex.q}-${hex.r}-${i}`"
-            :x="icon.x"
-            :y="icon.y"
-            :width="icon.size"
-            :height="icon.size"
-            :href="`/src/assets/img/${TERRAIN_ICON[hex.terrain]}.svg`"
-            :opacity="icon.opacity"
-            style="pointer-events: none"
+            :key="`ti-${hex.q}-${hex.r}`"
+            :x="hexCenter(hex.q, hex.r)[0]-13"
+            :y="hexCenter(hex.q, hex.r)[1]-12.5"
+            height= "25"
+            width="26"
+            :href="`/src/assets/img/tiles/${TERRAIN_ICON[hex.terrain]}${ Math.floor(Math.random() * 4) + 1 }.png`"
           />
           <!-- Territory border edges -->
           <line

@@ -50,6 +50,7 @@ const selectedColor    = ref<string>(props.existingSetup?.color ?? '#ffba00')
 const cityQ            = ref(props.existingSetup?.city_q    ?? null as number | null)
 const cityR            = ref(props.existingSetup?.city_r    ?? null as number | null)
 const randomUser_Id     = ref(props.existingSetup?.randomUserId    ?? null as number | null)
+const resigned          = ref(props.existingSetup?.resigned    ?? null as boolean | null)
 
 const cityLabel = computed(() => {
   if (cityQ.value !== null && cityR.value !== null)
@@ -101,7 +102,8 @@ function save() {
     color:   selectedColor.value,
     city_q:  cityQ.value!,
     city_r:  cityR.value!,
-    randomUserId: randomUser_Id.value!
+    randomUserId: randomUser_Id.value!,
+    resigned: resigned.value!
   })
 }
 </script>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useHexMap } from '@/composables/useHexMap'
 import { useMapIO } from '@/composables/useMapIO'
 import type { MapPlayer } from '@/composables/useMapIO'
@@ -117,6 +117,27 @@ const showEndedOverlay = computed(() =>
 const winner = computed(() => {
   const lastAlive = allPlayerSetups.value.find(s => !s.resigned)
   return lastAlive?.faction ?? lastAlive?.user_id?.toString() ?? 'Unknown'
+})
+
+// ── Auto-start countdown ─────────────────────────────────────────────────
+const nowTick            = ref(Math.floor(Date.now() / 1000))
+let countdownInterval: ReturnType<typeof setInterval> | null = null
+
+const allCitiesSet = computed(() => {
+  if (!loadedMapStatus.value) return false
+  if (loadedMapStatus.value.players.length === 0) return false
+  return loadedMapStatus.value.players.every(p =>
+    allPlayerSetups.value.some(s => s.user_id === p.user_id && s.city_q != null)
+  )
+})
+
+const autoStartSecondsLeft = computed<number | null>(() => {
+  if (loadedMapStatus.value?.mapStatus !== 'ongoing') return null
+  if (!allCitiesSet.value) return null
+  const lastSetup = loadedMapStatus.value.last_setup_at ?? 0
+  if (!lastSetup) return null
+  const remaining = 30 - (nowTick.value - lastSetup)
+  return remaining > 0 ? remaining : 0
 })
 
 // Map status label for toolbar
@@ -369,6 +390,7 @@ async function handleDeny(map_uid: string, user_id: number) {
 }
 
 onMounted(async () => {
+  countdownInterval = setInterval(() => { nowTick.value = Math.floor(Date.now() / 1000) }, 1000)
   await checkAuth()
 
   const params = new URLSearchParams(window.location.search)
@@ -381,6 +403,10 @@ onMounted(async () => {
   } else {
     buildMapRandom()
   }
+})
+
+onUnmounted(() => {
+  if (countdownInterval) clearInterval(countdownInterval)
 })
 </script>
 
@@ -505,6 +531,14 @@ onMounted(async () => {
         @color-change="playerBorderColor = $event"
       />
     </div>
+
+    <!-- Auto-start countdown banner -->
+    <Transition name="popin">
+      <div v-if="autoStartSecondsLeft !== null" class="autostart-banner">
+        🏰 All players have selected a starting point. Game will start in:
+        <strong class="autostart-count">{{ autoStartSecondsLeft }}s</strong>
+      </div>
+    </Transition>
 
     <!-- ═══ All fixed pop-ins live here, at root level, outside canvas-wrapper ═══ -->
 
