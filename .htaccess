@@ -13,4 +13,17 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule . /index.php [L]
 </IfModule>
 
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/png  "access plus 1 day"
+  ExpiresByType image/svg+xml "access plus 1 day"
+  ExpiresByType text/css   "access plus 1 week"
+  ExpiresByType application/javascript "access plus 1 week"
+</IfModule>
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(png|svg|jpg|gif|ico)$">
+    Header set Cache-Control "public, max-age=86400, immutable"
+  </FilesMatch>
+</IfModule>
 # END WordPress

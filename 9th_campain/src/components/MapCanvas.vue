@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { type Hex, TERRAIN_COLOR, TERRAIN_BORDER, HEX_SIZE, hexCenter, hexPoints, getSvgW, getSvgH } from '@/composables/useHexMap'
 import type { PlayerSetupWithId, OwnedTile, Army } from '@/composables/useMapIO'
 
@@ -126,6 +126,20 @@ const TERRAIN_ICON: Record<string, string> = {
   forest:   'Woods',
   water:    'Water',
 }
+
+// Preload all tile PNGs, city and army SVGs into the browser cache on mount
+// so SVG <image> elements never trigger a network fetch during zoom/pan
+onMounted(() => {
+  const toPreload: string[] = []
+  for (const name of Object.values(TERRAIN_ICON)) {
+    for (let i = 1; i <= 4; i++) {
+      toPreload.push(`/src/assets/img/tiles/${name}${i}.png`)
+    }
+  }
+  for (let i = 1; i <= 3; i++) toPreload.push(`/src/assets/img/town-${i}.svg`)
+  toPreload.push('/src/assets/img/army-1.svg')
+  toPreload.forEach(src => { const img = new Image(); img.src = src })
+})
 
 // Seeded pseudo-random so icons are stable per tile
 function seededRand(seed: number): () => number {
@@ -290,7 +304,7 @@ function armyColor(army: Army): string {
             :y="hexCenter(hex.q, hex.r)[1]-12.5"
             height= "25"
             width="26"
-            :href="`/src/assets/img/tiles/${TERRAIN_ICON[hex.terrain]}${ Math.floor(Math.random() * 4) + 1 }.png`"
+            :href="`/src/assets/img/tiles/${TERRAIN_ICON[hex.terrain]}${(Math.abs(hex.q * 73856093 ^ hex.r * 19349663) % 4) + 1}.png`"
           />
           <!-- Territory border edges -->
           <line

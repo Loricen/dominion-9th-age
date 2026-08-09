@@ -17,6 +17,7 @@ export interface MapSave {
   players?: MapPlayer[]
   hexes: Hex[]
   last_setup_at?: number
+  ongoing_since ?: number
 }
 
 export interface MapListItem {
@@ -267,7 +268,8 @@ export function useMapIO() {
         mapStatus:   'created',
         hexturn:     0,
         players:     [],
-        last_setup_at: 0
+        last_setup_at: 0,
+        ongoing_since: 0
       }
       await refreshMapList()
     } catch (err) {
