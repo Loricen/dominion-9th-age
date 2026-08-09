@@ -12,6 +12,7 @@ const props = defineProps<{
   canEdit: boolean
   canFinish: boolean
   canResign: boolean
+  canForceStart: boolean
   canEndTurn: boolean
   turnDone: boolean
   hexturn: number
@@ -36,6 +37,7 @@ const emit = defineEmits<{
   endTurn: []
   forceEndTurn: []
   resign: []
+  forceStart: []
 }>()
 
 const jsonFileInput  = ref<HTMLInputElement | null>(null)
@@ -103,6 +105,9 @@ function submitUidLoad() {
       <!-- End Game — owner, finished, not yet ended -->
       <button v-if="canResign ?? false" class="btn-end" @click="emit('resign')">
         🏳 Resign
+      </button>
+      <button v-if="canForceStart ?? false" class="btn-start" @click="emit('forceStart')" title="Force start (24h+ as ongoing, cityless players resign)">
+        ▶ Force Start
       </button>
       <template v-if="canEndTurn">
         <button v-if="!turnDone" class="btn-nextturn" @click="emit('endTurn')" :title="`Current turn: ${hexturn}`">

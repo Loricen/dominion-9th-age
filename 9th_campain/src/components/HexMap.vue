@@ -31,7 +31,7 @@ const {
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
   userMaps, isLoggedIn, userRole, credits, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, 
   showMsg, checkAuth, downloadMap, saveToServer,showPopIn,
-  loadFromServer, deleteFromServer, finishMap, startMap, endTurn, resignMap, claimTile, buyArmy, moveArmy, renameArmy, upgradeArmy,
+  loadFromServer, deleteFromServer, finishMap, startMap, endTurn, resignMap, forceStart, claimTile, buyArmy, moveArmy, renameArmy, upgradeArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
@@ -73,6 +73,13 @@ const canFinish = computed(() =>
   loadedMapStatus.value.is_owner &&
   loadedMapStatus.value.mapStatus === 'created'
 )
+
+const canForceStart = computed(() => {
+  if (!loadedMapStatus.value?.is_owner) return false
+  if (loadedMapStatus.value.mapStatus !== 'ongoing') return false
+  const ongoingSince = loadedMapStatus.value.ongoing_since ?? 0
+  return ongoingSince > 0 && (Date.now() / 1000 - ongoingSince) >= 86400
+})
 
 const canResign = computed(() =>
   loadedMapStatus.value !== null &&
@@ -155,7 +162,8 @@ const loadedMapName     = ref('')
 const showSaveModal     = ref(false)
 const pendingDeleteUid  = ref<string | null>(null)
 const showFinishConfirm = ref(false)
-const showResignConfirm = ref(false)
+const showResignConfirm    = ref(false)
+const showForceStartConfirm = ref(false)
 
 const isSelectingCity = ref(false)
 const isClaiming      = ref(false)
@@ -220,6 +228,13 @@ async function confirmFinish() {
   try { await finishMap(loadedMapStatus.value.uid) }
   catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error validating map') }
   showFinishConfirm.value = false
+}
+
+async function confirmForceStart() {
+  if (!loadedMapStatus.value) return
+  try { await forceStart(loadedMapStatus.value.uid) }
+  catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Error force starting') }
+  showForceStartConfirm.value = false
 }
 
 async function confirmResign() {
@@ -423,6 +438,7 @@ onUnmounted(() => {
       :can-finish="canFinish"
       :can-end-turn="canEndTurn"
       :can-resign="canResign"
+      :can-force-start="canForceStart"
       :turn-done="myTurnDone"
       :hexturn="loadedMapStatus?.hexturn ?? 0"
       :map-status="mapStatus"
@@ -441,6 +457,7 @@ onUnmounted(() => {
       @finish-map="showFinishConfirm = true"
       @end-turn="handleEndTurn"
       @resign="showResignConfirm = true"
+      @force-start="showForceStartConfirm = true"
       @refresh-map="handleRefreshMap"
     />
 
@@ -460,6 +477,7 @@ onUnmounted(() => {
         :map-status="loadedMapStatus?.mapStatus ?? ''"
         :chat-messages="chatMessages"
         :current-user-id="currentUserId"
+        :all-player-setups="allPlayerSetups"
         @terrain-change="handleTerrainChange"
         @generate="buildMapRandom"
         @reset-procedural="resetProceduralSettings"
@@ -585,6 +603,18 @@ onUnmounted(() => {
         <div class="confirm-actions">
           <button class="btn-confirm" @click="confirmFinish">✅ Validate</button>
           <button class="btn-cancel" @click="showFinishConfirm = false">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Force start confirm -->
+    <div v-if="showForceStartConfirm" class="modal-overlay" @click.self="showForceStartConfirm = false">
+      <div class="confirm-modal">
+        <p>Force start <strong>{{ loadedMapName }}</strong>?</p>
+        <p class="confirm-hint">Players without a starting city will be automatically resigned.</p>
+        <div class="confirm-actions">
+          <button class="btn-confirm" @click="confirmForceStart">▶ Force Start</button>
+          <button class="btn-cancel" @click="showForceStartConfirm = false">Cancel</button>
         </div>
       </div>
     </div>

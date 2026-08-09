@@ -126,6 +126,7 @@ export function useMapIO() {
     hexturn: number
     players: MapPlayer[]
     last_setup_at: number
+    ongoing_since: number
   } | null>(null)
 
   let requestsPollInterval: ReturnType<typeof setInterval> | null = null
@@ -193,6 +194,7 @@ export function useMapIO() {
           loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
           loadedMapStatus.value.is_linked     = data.is_linked     ?? loadedMapStatus.value.is_linked
           loadedMapStatus.value.last_setup_at = data.last_setup_at ?? loadedMapStatus.value.last_setup_at
+          loadedMapStatus.value.ongoing_since   = data.ongoing_since  ?? loadedMapStatus.value.ongoing_since
           allPlayerSetups.value           = (data.player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
           ownedTiles.value = data.owned_tiles ?? []
           armies.value     = data.armies       ?? []
@@ -291,6 +293,7 @@ export function useMapIO() {
       is_pending:  data.is_pending  ?? false,
       mapStatus:       data.mapStatus ?? 'created',
       last_setup_at:   data.last_setup_at ?? 0,
+      ongoing_since:   data.ongoing_since ?? 0,
       hexturn:     data.hexturn   ?? 0,
       players:     data.players     ?? [],
     }
@@ -507,6 +510,16 @@ export function useMapIO() {
     showMsg('You have resigned.')
   }
 
+  async function forceStart(uid: string): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/forcestart`, {
+      method: 'POST', headers: authHeaders(),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to force start')
+    if (loadedMapStatus.value) loadedMapStatus.value.mapStatus = json.mapStatus
+    showMsg('Game force started!')
+  }
+
   async function endTurn(uid: string): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/endturn`, {
       method: 'POST', headers: authHeaders(),
@@ -558,7 +571,7 @@ export function useMapIO() {
     uidCopied, userMaps, isLoggedIn, userRole, credits, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers, showPopIn,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endTurn, resignMap, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy, renameArmy, upgradeArmy,
+    finishMap, startMap, endTurn, resignMap, forceStart, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy, renameArmy, upgradeArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }

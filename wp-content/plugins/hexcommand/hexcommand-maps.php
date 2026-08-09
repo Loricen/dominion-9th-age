@@ -192,6 +192,11 @@ add_action('rest_api_init', function () {
         'callback'            => 'hexcommand_delete_map',
         'permission_callback' => 'hexcommand_is_logged_in',
     ]);
+    register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/forcestart', [
+        'methods'             => 'POST',
+        'callback'            => 'hexcommand_force_start',
+        'permission_callback' => 'hexcommand_is_logged_in',
+    ]);
     register_rest_route('hexcommand/v1', '/maps/(?P<uid>[A-Z0-9]{8})/finish', [
         'methods'             => 'POST',
         'callback'            => 'hexcommand_finish_map',

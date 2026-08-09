@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { TERRAIN_TYPES, TERRAIN_COLOR, TERRAIN_LABEL, type TerrainType, type MapSizeKey } from '@/composables/useHexMap'
 import type { ProceduralSettings } from '@/composables/useProceduralGen'
-import type { MapListItem, MapPlayer, ChatMessage } from '@/composables/useMapIO'
+import type { MapListItem, MapPlayer, ChatMessage, PlayerSetupWithId } from '@/composables/useMapIO'
 import ProceduralPanel from './ProceduralPanel.vue'
 import MapsList from './MapsList.vue'
 
@@ -20,6 +20,7 @@ const props = defineProps<{
   mapPlayers: MapPlayer[]
   mapStatus: string
   currentUserId: number
+  allPlayerSetups?: PlayerSetupWithId[]
 }>()
 
 const emit = defineEmits<{
@@ -85,6 +86,11 @@ const showControls       = ref(true)
         <div class="players-list">
           <div v-for="p in mapPlayers" :key="p.user_id" class="player-row">
             <span class="player-name">{{ p.name }}</span>
+            <span
+              v-if="(allPlayerSetups ?? []).find(s => s.user_id === p.user_id)?.turn_done"
+              class="turn-done-badge"
+              title="Turn finished"
+            >✓</span>
             <span class="online-dot" :class="Date.now() / 1000 - p.last_seen < 30 ? 'online' : 'offline'" :title="Date.now() / 1000 - p.last_seen < 30 ? 'Online' : 'Offline'" /> 
             <span v-if="p.is_owner" class="player-tag">GM</span>
           </div>

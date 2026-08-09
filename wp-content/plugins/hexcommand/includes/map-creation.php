@@ -477,6 +477,7 @@ function hexcommand_finish_map(WP_REST_Request $request): WP_REST_Response {
             return new WP_REST_Response(['error' => 'Not enough credits (100 required to validate a map)'], 402);
         }
         $state = update_field('hexmap_state', 'ongoing', $post->ID);
+        update_field('ongoing_since', time(), $post->ID);
     }
 
     return new WP_REST_Response(['success' => true], 200);
@@ -514,6 +515,54 @@ function hexcommand_start_map(WP_REST_Request $request): WP_REST_Response {
 
     update_field('hexmap_state', 'started', $post_id);
     return new WP_REST_Response(['success' => true], 200);
+}
+
+// ============================================================
+// FORCE START — owner only, map ongoing for 24h+
+// Resigns players without cities, then starts the game
+// ============================================================
+function hexcommand_force_start(WP_REST_Request $request): WP_REST_Response {
+    $uid     = $request->get_param('uid');
+    $user_id = get_current_user_id();
+
+    $post = hexcommand_find_post_by_uid($uid);
+    if (!$post) return new WP_REST_Response(['error' => 'Map not found'], 404);
+    $post_id = $post->ID;
+
+    if ((int) $post->post_author !== $user_id) {
+        return new WP_REST_Response(['error' => 'Only the owner can force start'], 403);
+    }
+
+    $state = hexcommand_get_state($post_id);
+    if ($state !== 'ongoing') {
+        return new WP_REST_Response(['error' => 'Map must be ongoing'], 409);
+    }
+
+    $ongoing_since = (int) get_field('ongoing_since', $post_id);
+    if ($ongoing_since > 0 && (time() - $ongoing_since) < 86400) {
+        return new WP_REST_Response(['error' => 'Must wait 24 hours before force starting'], 409);
+    }
+
+    // Resign all players without a city
+    $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
+    foreach ($setups as &$setup) {
+        if (empty($setup['city_q']) || $setup['city_q'] === null) {
+            $setup['resigned'] = true;
+        }
+    }
+    unset($setup);
+
+    // Check at least one player has a city
+    $ready = array_filter($setups, fn($s) => empty($s['resigned']));
+    if (empty($ready)) {
+        return new WP_REST_Response(['error' => 'No players have selected a city'], 409);
+    }
+
+    hexcommand_set_json_field($post_id, 'player_setups', $setups);
+    update_field('hexmap_state', 'started', $post_id);
+    update_field('turn_started_at', time(), $post_id);
+
+    return new WP_REST_Response(['success' => true, 'mapStatus' => 'started'], 200);
 }
 
 // ============================================================
