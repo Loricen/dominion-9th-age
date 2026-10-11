@@ -14,7 +14,7 @@ const emit = defineEmits<{
   <div class="join-banner">
     <div class="join-banner__text">
       <span class="join-banner__title">{{ mapName }}</span>
-      <template v-if="mapStatus !== 'ongoing'">
+      <template v-if="mapStatus !== 'awaiting'">
         <span class="join-banner__sub locked">🔒 This map is not accepting new players.</span>
       </template>
       <template v-else-if="isPending">
@@ -25,7 +25,7 @@ const emit = defineEmits<{
       </template>
     </div>
     <button
-      v-if="mapStatus === 'ongoing' && !isPending"
+      v-if="mapStatus === 'awaiting' && !isPending"
       class="join-banner__btn"
       @click="emit('join')"
     >

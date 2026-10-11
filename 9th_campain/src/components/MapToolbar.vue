@@ -106,7 +106,7 @@ function submitUidLoad() {
       <button v-if="canResign ?? false" class="btn-end" @click="emit('resign')">
         🏳 Resign
       </button>
-      <button v-if="canForceStart ?? false" class="btn-start" @click="emit('forceStart')" title="Force start (24h+ as ongoing, cityless players resign)">
+      <button v-if="canForceStart ?? false" class="btn-start" @click="emit('forceStart')" title="Force start (24h+ as awaiting, cityless players resign)">
         ▶ Force Start
       </button>
       <template v-if="canEndTurn">

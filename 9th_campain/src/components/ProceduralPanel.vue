@@ -19,7 +19,6 @@ const emit = defineEmits<{
   'update:settings': [s: ProceduralSettings]
 }>()
 const showProcedural = ref(true)
-const showTerrain = ref(true)
 
 function updateInfluence(v: string) {
   emit('update:settings', { ...props.settings, neighborInfluence: parseFloat(v) })
@@ -43,7 +42,7 @@ function updateWeight(terrain: string, v: string) {
 
 <template>
   <div class="panel-title" @click="showProcedural = !showProcedural">
-    ⚙️ Generation Settings
+    Generation Settings
     <span class="chevron">{{ showProcedural ? '▲' : '▼' }}</span>
   </div>
   <div class="proc-panel collapsible" v-bind:class = "!showProcedural?'collapsed':''">
@@ -125,22 +124,5 @@ function updateWeight(terrain: string, v: string) {
       <option v-for="(s, key) in MAP_SIZES" :key="key" :value="key">{{ s.label }}</option>
     </select>
     
-    <!-- Terrain Brush — advanced_player only -->
-    <div class="panel" v-if="isAdvancedPlayer">
-      <div>
-        <div class="panel-title" @click="showTerrain = !showTerrain">
-          🖌️ Terrain Brush <span class="chevron">{{ showTerrain ? '▲' : '▼' }}</span>
-        </div>
-        <div class="collapsible" :class="{ collapsed: !showTerrain }">
-          <button
-            v-for="t in TERRAIN_TYPES" :key="t"
-            class="terrain-btn"
-            :class="{ active: activeTerrain === t }"
-            :style="{ background: activeTerrain === t ? TERRAIN_COLOR[t] : 'transparent', borderColor: TERRAIN_COLOR[t] }"
-            @click="emit('terrainChange', t)"
-          >{{ TERRAIN_LABEL[t] }}</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>

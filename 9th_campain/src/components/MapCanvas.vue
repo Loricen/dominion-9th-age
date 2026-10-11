@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { type Hex, TERRAIN_COLOR, TERRAIN_BORDER, HEX_SIZE, hexCenter, hexPoints, getSvgW, getSvgH } from '@/composables/useHexMap'
-import type { PlayerSetupWithId, OwnedTile, Army } from '@/composables/useMapIO'
+import type { PlayerSetupWithId, OwnedTile, Army, Building } from '@/composables/useMapIO'
 
 const props = defineProps<{
   hexes: Hex[]
@@ -16,12 +16,17 @@ const props = defineProps<{
   playerSetups?: PlayerSetupWithId[]
   ownedTiles?: OwnedTile[]
   armies?: Army[]
+  buildings?: Building[]
   claimingMode?: boolean
   selectedArmyId?: number | null
   movingMode?: boolean
   buyingArmyMode?: boolean
+  buyingSpyMode?: boolean
+  buyingSettlerMode?: boolean
+  buyingFarmerMode?: boolean
   currentUserId?: number | null
   backVis ?: string | null
+  mapStatus?: string
 }>()
 
 const emit = defineEmits<{
@@ -36,16 +41,147 @@ function isSelected(q: number, r: number): boolean {
   return props.selectedQ === q && props.selectedR === r
 }
 
-function tileOwnerColor(q: number, r: number): string | null {
-  const citySetup = (props.playerSetups ?? []).find(s => s.city_q === q && s.city_r === r)
-  if (citySetup) return citySetup.color
-  const owned = (props.ownedTiles ?? []).find(t => t.q === q && t.r === r)
-  if (owned) {
-    const setup = (props.playerSetups ?? []).find(s => s.user_id === owned.user_id)
-    return setup?.color ?? null
+// Memoized ownership lookup — O(1) per tile instead of scanning playerSetups/ownedTiles
+// arrays on every call. Rebuilt only when playerSetups or ownedTiles actually change.
+const ownerIdMap = computed<Map<string, number>>(() => {
+  const map = new Map<string, number>()
+  for (const t of (props.ownedTiles ?? [])) map.set(`${t.q},${t.r}`, t.user_id)
+  // Buildings (cities) always win, even if not separately listed in ownedTiles
+  for (const b of (props.buildings ?? [])) {
+    if (b.q != null && b.r != null) map.set(`${b.q},${b.r}`, b.user_id)
   }
-  return null
+  return map
+})
+
+const ownerColorMap = computed<Map<number, string>>(() => {
+  const map = new Map<number, string>()
+  for (const s of (props.playerSetups ?? [])) map.set(s.user_id, s.color)
+  return map
+})
+
+function tileOwnerId(q: number, r: number): number | null {
+  return ownerIdMap.value.get(`${q},${r}`) ?? null
 }
+
+function tileOwnerColor(q: number, r: number): string | null {
+  const ownerId = tileOwnerId(q, r)
+  if (ownerId === null) return null
+  return ownerColorMap.value.get(ownerId) ?? null
+}
+
+// ── Fog of war ──────────────────────────────────────────────────────────
+// Offset (odd-q, flat-top) → cube coordinates, for correct hex distance
+function offsetToCube(q: number, r: number): [number, number, number] {
+  const x = q
+  const z = r - (q - (q & 1)) / 2
+  const y = -x - z
+  return [x, y, z]
+}
+
+function hexDistance(q1: number, r1: number, q2: number, r2: number): number {
+  const [x1, y1, z1] = offsetToCube(q1, r1)
+  const [x2, y2, z2] = offsetToCube(q2, r2)
+  return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2))
+}
+
+const FOG_RADIUS       = 5   // tiles within this range of your territory/city are fully visible
+const PNG_LOAD_RADIUS  = 10  // tiles beyond this range never load their texture, even if fogged
+const SPY_SIGHT_RADIUS = 7   // spies see (and reveal fog) further than plain territory
+
+interface VisionSource { q: number; r: number; radius: number }
+
+// Tiles/units owned by the current player, each with its own vision radius
+// (spies see further than plain territory or a city)
+const myOwnedTileList = computed<VisionSource[]>(() => {
+  if (props.currentUserId == null) return []
+  const list: VisionSource[] = []
+  for (const b of (props.buildings ?? [])) {
+    // Only cities grant territorial vision — a farm is just a production site
+    if (b.user_id === props.currentUserId && b.building_type !== 'farm' && b.q != null && b.r != null) {
+      list.push({ q: b.q, r: b.r, radius: FOG_RADIUS })
+    }
+  }
+  for (const t of (props.ownedTiles ?? [])) {
+    if (t.user_id === props.currentUserId) list.push({ q: t.q, r: t.r, radius: FOG_RADIUS })
+  }
+  // Spies grant a larger vision radius than territory
+  for (const a of (props.armies ?? [])) {
+    if (a.user_id === props.currentUserId && a.unit_type === 'spy' && a.q != null && a.r != null) {
+      list.push({ q: a.q, r: a.r, radius: SPY_SIGHT_RADIUS })
+    }
+  }
+  return list
+})
+
+// Positions of the current player's own spies — the ONLY source of enemy
+// unit detection. Owning territory, an army, or a city is not enough on
+// its own; enemy units are only spotted within range of a friendly spy.
+const mySpyPositions = computed<Array<{ q: number; r: number }>>(() => {
+  if (props.currentUserId == null) return []
+  const list: Array<{ q: number; r: number }> = []
+  for (const a of (props.armies ?? [])) {
+    if (a.user_id === props.currentUserId && a.unit_type === 'spy' && a.q != null && a.r != null) {
+      list.push({ q: a.q, r: a.r })
+    }
+  }
+  return list
+})
+
+function canSeeEnemyUnit(q: number, r: number): boolean {
+  for (const t of mySpyPositions.value) {
+    if (hexDistance(q, r, t.q, t.r) <= SPY_SIGHT_RADIUS) return true
+  }
+  return false
+}
+
+// Visibility rule for a unit marker:
+// - your own units are always visible
+// - any enemy unit (army, spy or settler) is only spotted within SPY_SIGHT_RADIUS
+//   of one of your own spies — general territory/fog vision is not enough
+function isUnitVisible(unit: Army): boolean {
+  if (unit.q == null || unit.r == null) return false
+  if (unit.user_id === props.currentUserId) return true
+  return canSeeEnemyUnit(unit.q, unit.r)
+}
+
+// Memoized per-tile fog state: computed ONCE per hexes/ownedTiles/playerSetups change,
+// instead of recalculating distance-to-territory on every template evaluation.
+interface FogState { fogged: boolean; loadTexture: boolean }
+const fogMap = computed<Map<string, FogState>>(() => {
+  const map = new Map<string, FogState>()
+  if (props.currentUserId == null || props.mapStatus !== 'started') {
+    // No fog when there's no logged-in player context (e.g. map creation mode)
+    for (const h of props.hexes) map.set(`${h.q},${h.r}`, { fogged: false, loadTexture: true })
+    return map
+  }
+
+  const mine = myOwnedTileList.value
+  for (const h of props.hexes) {
+    let visible = false
+    let nearest  = Infinity
+    for (const t of mine) {
+      const d = hexDistance(h.q, h.r, t.q, t.r)
+      if (d < nearest) nearest = d
+      if (d <= t.radius) visible = true
+      if (visible && nearest === 0) break
+    }
+    map.set(`${h.q},${h.r}`, {
+      fogged: !visible,
+      loadTexture: nearest <= PNG_LOAD_RADIUS,
+    })
+  }
+  return map
+})
+
+function isFogged(q: number, r: number): boolean {
+  if (props.mapStatus !== 'started') return false
+  return fogMap.value.get(`${q},${r}`)?.fogged ?? false
+}
+
+function shouldLoadTexture(q: number, r: number): boolean {
+  return fogMap.value.get(`${q},${r}`)?.loadTexture ?? true
+}
+
 
 // Compute the set of valid move destinations when an army is selected
 // enemyArmyPositions: enemy armies that sit on an adjacent valid move tile (battle targets, shown red)
@@ -101,13 +237,13 @@ function isEnemyArmyTile(q: number, r: number): boolean {
   return enemyArmyPositions.value.has(`${q},${r}`)
 }
 
-// Tiles where the current player can build an army (their own cities)
+// Tiles where the current player can build a unit (any of their own cities)
 const cityTiles = computed<Set<string>>(() => {
   const result = new Set<string>()
-  if (!props.buyingArmyMode || props.currentUserId == null) return result
-  for (const s of (props.playerSetups ?? [])) {
-    if (s.user_id === props.currentUserId && s.city_q != null && s.city_r != null) {
-      result.add(`${s.city_q},${s.city_r}`)
+  if ((!props.buyingArmyMode && !props.buyingSpyMode && !props.buyingSettlerMode && !props.buyingFarmerMode) || props.currentUserId == null) return result
+  for (const b of (props.buildings ?? [])) {
+    if (b.user_id === props.currentUserId && b.building_type !== 'farm' && b.q != null && b.r != null) {
+      result.add(`${b.q},${b.r}`)
     }
   }
   return result
@@ -127,7 +263,7 @@ const TERRAIN_ICON: Record<string, string> = {
   water:    'Water',
 }
 
-// Preload all tile PNGs, city and army SVGs into the browser cache on mount
+// Preload all tile PNGs into the browser cache on mount
 // so SVG <image> elements never trigger a network fetch during zoom/pan
 onMounted(() => {
   const toPreload: string[] = []
@@ -136,8 +272,6 @@ onMounted(() => {
       toPreload.push(`/src/assets/img/tiles/${name}${i}.png`)
     }
   }
-  for (let i = 1; i <= 3; i++) toPreload.push(`/src/assets/img/town-${i}.svg`)
-  toPreload.push('/src/assets/img/army-1.svg')
   toPreload.forEach(src => { const img = new Image(); img.src = src })
 })
 
@@ -188,7 +322,7 @@ function hexStroke(hex: Hex): string {
   if (isSelected(hex.q, hex.r)) return props.selectedBorderColor ?? '#FFD700'
   if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return '#ff3333'
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return '#00e5ff'
-  if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return '#FFD700'
+  if ((props.buyingArmyMode || props.buyingSpyMode || props.buyingSettlerMode || props.buyingFarmerMode) && isCityTile(hex.q, hex.r)) return '#FFD700'
   if (props.claimingMode) return '#ffffff33'
   return TERRAIN_BORDER[hex.terrain]
 }
@@ -197,7 +331,7 @@ function hexStrokeWidth(hex: Hex): number {
   if (isSelected(hex.q, hex.r)) return 2
   if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return 2.5
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 2
-  if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 2.5
+  if ((props.buyingArmyMode || props.buyingSpyMode || props.buyingSettlerMode || props.buyingFarmerMode) && isCityTile(hex.q, hex.r)) return 2.5
   return 0.8
 }
 
@@ -223,52 +357,57 @@ function hexVertices(cx: number, cy: number): Array<[number, number]> {
   return verts
 }
 
-function territoryBorderEdges(hex: Hex): BorderEdge[] {
-  const ownerColor = tileOwnerColor(hex.q, hex.r)
-  if (!ownerColor) return []
+const EMPTY_EDGES: BorderEdge[] = []
 
-  const ownerUserId = (() => {
-    const citySetup = (props.playerSetups ?? []).find(s => s.city_q === hex.q && s.city_r === hex.r)
-    if (citySetup) return citySetup.user_id
-    return (props.ownedTiles ?? []).find(t => t.q === hex.q && t.r === hex.r)?.user_id ?? null
-  })()
-  if (ownerUserId === null) return []
+// Memoized: computed ONCE for the whole map instead of allocating a new
+// array for every hex on every single render (this was the main source of
+// the out-of-memory crash — v-for called this directly in the template).
+const borderEdgesMap = computed<Map<string, BorderEdge[]>>(() => {
+  const map = new Map<string, BorderEdge[]>()
+  for (const hex of props.hexes) {
+    const ownerUserId = tileOwnerId(hex.q, hex.r)
+    if (ownerUserId === null) continue
+    const ownerColor = ownerColorMap.value.get(ownerUserId)
+    if (!ownerColor) continue
 
-  const offsets = hex.q % 2 === 0 ? EDGE_NEIGHBORS_EVEN : EDGE_NEIGHBORS_ODD
-  const [cx, cy] = hexCenter(hex.q, hex.r)
-  const verts = hexVertices(cx, cy)
-  const edges: BorderEdge[] = []
+    const offsets = hex.q % 2 === 0 ? EDGE_NEIGHBORS_EVEN : EDGE_NEIGHBORS_ODD
+    const [cx, cy] = hexCenter(hex.q, hex.r)
+    const verts = hexVertices(cx, cy)
+    const edges: BorderEdge[] = []
 
-  for (let i = 0; i < 6; i++) {
-    const [dq, dr] = offsets[i]!
-    const nq = hex.q + dq
-    const nr = hex.r + dr
-    // Check if neighbor is owned by the same player
-    const neighborOwner = (() => {
-      const citySetup = (props.playerSetups ?? []).find(s => s.city_q === nq && s.city_r === nr)
-      if (citySetup) return citySetup.user_id
-      return (props.ownedTiles ?? []).find(t => t.q === nq && t.r === nr)?.user_id ?? null
-    })()
-    if (neighborOwner !== ownerUserId) {
-      const [x1, y1] = verts[i]!
-      const [x2, y2] = verts[(i + 1) % 6]!
-      edges.push({ x1, y1, x2, y2, color: ownerColor })
+    for (let i = 0; i < 6; i++) {
+      const [dq, dr] = offsets[i]!
+      const nq = hex.q + dq
+      const nr = hex.r + dr
+      if (tileOwnerId(nq, nr) !== ownerUserId) {
+        const [x1, y1] = verts[i]!
+        const [x2, y2] = verts[(i + 1) % 6]!
+        edges.push({ x1, y1, x2, y2, color: ownerColor })
+      }
     }
+    if (edges.length > 0) map.set(`${hex.q},${hex.r}`, edges)
   }
-  return edges
+  return map
+})
+
+function territoryBorderEdges(hex: Hex): BorderEdge[] {
+  return borderEdgesMap.value.get(`${hex.q},${hex.r}`) ?? EMPTY_EDGES
 }
 
 function hexClass(hex: Hex): string {
   if (props.movingMode && isEnemyArmyTile(hex.q, hex.r)) return 'hex-battle-target'
   if (props.movingMode && isValidMoveTile(hex.q, hex.r)) return 'hex-move-target'
-  if (props.buyingArmyMode && isCityTile(hex.q, hex.r)) return 'hex-city-target'
+  if ((props.buyingArmyMode || props.buyingSpyMode || props.buyingSettlerMode || props.buyingFarmerMode) && isCityTile(hex.q, hex.r)) return 'hex-city-target'
   if (props.claimingMode && !tileOwnerColor(hex.q, hex.r) && hex.terrain !== 'water') return 'hex-claimable'
   if (props.claimingMode && hex.terrain === 'water') return 'hex-no-claim'
   return ''
 }
 
-function armyColor(army: Army): string {
-  return (props.playerSetups ?? []).find(s => s.user_id === army.user_id)?.color ?? '#ffffff'
+function UnitColor(e: Army): string {
+  return (props.playerSetups ?? []).find(s => s.user_id === e.user_id)?.color ?? '#ffffff'
+}
+function buildingColor(e: Building): string {
+  return (props.playerSetups ?? []).find(s => s.user_id === e.user_id)?.color ?? '#ffffff'
 }
 </script>
 
@@ -290,24 +429,29 @@ function armyColor(army: Army): string {
         <g v-for="hex in hexes" :key="`${hex.q}-${hex.r}`">
           <polygon
             :points="hexPoints(...hexCenter(hex.q, hex.r))"
-            :fill="TERRAIN_COLOR[hex.terrain]"
+            :fill="isFogged(hex.q, hex.r) ? '#05070c' : TERRAIN_COLOR[hex.terrain]"
             :stroke="hexStroke(hex)"
             :stroke-width="hexStrokeWidth(hex)"
-            :class="['hex-cell', hexClass(hex)]"
+            :class="['hex-cell', hexClass(hex), { 'hex-fogged': isFogged(hex.q, hex.r) }]"
             @click="emit('clickHex', { q: hex.q, r: hex.r })"
             @mouseover="(e: MouseEvent) => emit('hoverHex', { e, q: hex.q, r: hex.r })"
           />
           <!-- Terrain decoration icons — sorted by y so lower icons render on top -->
+          <!-- Only loads/renders the texture within PNG_LOAD_RADIUS; darkened while fogged -->
           <image
+            v-if="shouldLoadTexture(hex.q, hex.r)"
             :key="`ti-${hex.q}-${hex.r}`"
             :x="hexCenter(hex.q, hex.r)[0]-13"
             :y="hexCenter(hex.q, hex.r)[1]-12.5"
             height= "25"
             width="26"
+            :opacity="isFogged(hex.q, hex.r) ? 0.35 : 1"
             :href="`/src/assets/img/tiles/${TERRAIN_ICON[hex.terrain]}${(Math.abs(hex.q * 73856093 ^ hex.r * 19349663) % 4) + 1}.png`"
+            style="pointer-events: none"
           />
           <!-- Territory border edges -->
           <line
+            v-if="!isFogged(hex.q, hex.r)"
             v-for="(edge, ei) in territoryBorderEdges(hex)"
             :key="`be-${hex.q}-${hex.r}-${ei}`"
             :x1="edge.x1" :y1="edge.y1"
@@ -319,13 +463,13 @@ function armyColor(army: Army): string {
           />
         </g>
 
-        <!-- Buy-army glow rings around own cities -->
-        <g v-if="buyingArmyMode">
-          <template v-for="setup in (playerSetups ?? [])" :key="`glow-${setup.user_id}`">
-            <template v-if="setup.city_q != null && setup.city_r != null && setup.user_id === currentUserId">
+        <!-- Buy-unit glow rings around own cities -->
+        <g v-if="buyingArmyMode || buyingSpyMode || buyingSettlerMode || buyingFarmerMode">
+          <template v-for="building in (buildings ?? [])" :key="`glow-${building.id}`">
+            <template v-if="building.q != null && building.r != null && building.user_id === currentUserId && building.building_type !== 'farm'">
               <circle
-                :cx="hexCenter(setup.city_q, setup.city_r)[0]"
-                :cy="hexCenter(setup.city_q, setup.city_r)[1]"
+                :cx="hexCenter(building.q, building.r)[0]"
+                :cy="hexCenter(building.q, building.r)[1]"
                 r="11"
                 fill="none"
                 stroke="#FFD700"
@@ -335,8 +479,8 @@ function armyColor(army: Army): string {
                 style="pointer-events: none"
               />
               <circle
-                :cx="hexCenter(setup.city_q, setup.city_r)[0]"
-                :cy="hexCenter(setup.city_q, setup.city_r)[1]"
+                :cx="hexCenter(building.q, building.r)[0]"
+                :cy="hexCenter(building.q, building.r)[1]"
                 r="7"
                 fill="#FFD70022"
                 stroke="#FFD700"
@@ -348,49 +492,50 @@ function armyColor(army: Army): string {
           </template>
         </g>
 
-        <!-- Player city markers -->
-        <g v-for="setup in (playerSetups ?? [])" :key="`city-${setup.user_id}`">
-          <template v-if="setup.city_q != null && setup.city_r != null">
+        <!-- Building (city) markers -->
+        <g v-for="building in (buildings ?? [])" :key="`building-${building.id}`">
+          <template v-if="building.q != null && building.r != null && (building.user_id === currentUserId || !isFogged(building.q, building.r))">
             <image
-              :x="hexCenter(setup.city_q, setup.city_r)[0] - 8.5"
-              :y="hexCenter(setup.city_q, setup.city_r)[1] - 6.5"
+              :x="hexCenter(building.q, building.r)[0] - 8.5"
+              :y="hexCenter(building.q, building.r)[1] - 6.5"
               width="17"
               height="17"
-              :href="`/src/assets/img/town-${setup.randomUserId}.svg`"
+              :href="building.building_type === 'farm' ? '/src/assets/img/farm-1.svg' : `/src/assets/img/towns/town-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 3) + 1}-`+buildingColor(building).replace('#','')+`.svg`"
               style="pointer-events: none" />
           </template>
         </g>
 
-        <!-- Army markers -->
+        <!-- Army & spy markers -->
         <g v-for="army in (armies ?? [])" :key="army.id">
-          <template v-if="army.q != null && army.r != null">
+          <template v-if="isUnitVisible(army)">
             <!-- Selection ring (larger, behind) -->
             <circle
               v-if="selectedArmyId === army.id"
-              :cx="hexCenter(army.q, army.r)[0] + 4"
-              :cy="hexCenter(army.q, army.r)[1] - 3"
+              :cx="hexCenter(army.q!, army.r!)[0] + 4"
+              :cy="hexCenter(army.q!, army.r!)[1] - 3"
               r="7"
               fill="none"
               stroke="#00e5ff"
               stroke-width="1.5"
               style="pointer-events: none"
             />
-            <!-- Army icon -->
+            <!-- Unit icon -->
             <image
-              :x="hexCenter(army.q, army.r)[0]-1"
-              :y="hexCenter(army.q, army.r)[1]-7"
+              :x="hexCenter(army.q!, army.r!)[0]-1"
+              :y="hexCenter(army.q!, army.r!)[1]-7"
               width="10"
               height="10"
-              :href="`/src/assets/img/army-1.svg`"
+              :href="army.unit_type === 'spy' ? '/src/assets/img/spy-'+UnitColor(army).replace('#','')+'.svg' : army.unit_type === 'settler' ? '/src/assets/img/settler-'+UnitColor(army).replace('#','')+'.svg' : army.unit_type === 'farmer' ? '/src/assets/img/farmer-1.svg' : '/src/assets/img/army-'+UnitColor(army).replace('#','')+'.svg'"
+              :opacity="(army.unit_type === 'spy' || army.unit_type === 'settler' || army.unit_type === 'farmer') && army.user_id === currentUserId ? 0.85 : 1"
               style="user-select: none; cursor: pointer"
-              @click.stop="emit('clickArmy', { armyId: army.id })" /> <!-- ${army.armyIcon} -->
+              @click.stop="emit('clickArmy', { armyId: army.id })" />
             <!-- Player colour ring -->
             <circle
-              :cx="hexCenter(army.q, army.r)[0] + 4"
-              :cy="hexCenter(army.q, army.r)[1] - 3"
-              r="4"
+              :cx="hexCenter(army.q!, army.r!)[0] + 4"
+              :cy="hexCenter(army.q!, army.r!)[1] - 2"
+              r="6"
               fill="none"
-              :stroke="armyColor(army)"
+              :stroke="UnitColor(army)"
               stroke-width="1"
               style="pointer-events: none"
             />

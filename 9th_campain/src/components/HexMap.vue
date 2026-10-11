@@ -29,9 +29,9 @@ const {
 const {
   saveMsg, imageLoaded,popIn,
   showUidModal, lastHexmapUid, uidCopied, chatMessages, currentUserId,
-  userMaps, isLoggedIn, userRole, credits, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, 
+  userMaps, isLoggedIn, userRole, credits, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, buildings,
   showMsg, checkAuth, downloadMap, saveToServer,showPopIn,
-  loadFromServer, deleteFromServer, finishMap, startMap, endTurn, resignMap, forceStart, claimTile, buyArmy, moveArmy, renameArmy, upgradeArmy,
+  loadFromServer, deleteFromServer, finishMap, startMap, endTurn, resignMap, forceStart, claimTile, buyArmy, buySpy, buySettler, buyFarmer, foundCity, foundFarm, moveArmy, mergeArmy, renameArmy, upgradeArmy,
   requestJoinMap, approveRequest, denyRequest, savePlayerSetup, refreshPlayers,
   loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
 } = useMapIO()
@@ -58,6 +58,14 @@ const {
   onWheel, onMouseDown, resetView, zoomIn, zoomOut,
 } = useMapView()
 
+// Directional pad — pans the map by a fixed screen-space step, scaled so the
+// perceived movement stays consistent whatever the current zoom level.
+const PAN_STEP = 80
+function panBy(dx: number, dy: number) {
+  panX.value += dx * PAN_STEP
+  panY.value += dy * PAN_STEP
+}
+
 // --- Computed state ---
 const isAdvancedPlayer = computed(() => !!loadedMapStatus.value?.is_owner || appMode === 'create')
 const isOwner = computed(() => isAdvancedPlayer.value && userMaps.value.length > 0)
@@ -76,15 +84,15 @@ const canFinish = computed(() =>
 
 const canForceStart = computed(() => {
   if (!loadedMapStatus.value?.is_owner) return false
-  if (loadedMapStatus.value.mapStatus !== 'ongoing') return false
-  const ongoingSince = loadedMapStatus.value.ongoing_since ?? 0
-  return ongoingSince > 0 && (Date.now() / 1000 - ongoingSince) >= 86400
+  if (loadedMapStatus.value.mapStatus !== 'awaiting') return false
+  const awaitingSince = loadedMapStatus.value.awaiting_since ?? 0
+  return awaitingSince > 0 && (Date.now() / 1000 - awaitingSince) >= 86400
 })
 
 const canResign = computed(() =>
   loadedMapStatus.value !== null &&
   (loadedMapStatus.value.is_owner || loadedMapStatus.value.is_linked) &&
-  (loadedMapStatus.value.mapStatus === 'ongoing' || loadedMapStatus.value.mapStatus === 'started')
+  (loadedMapStatus.value.mapStatus === 'awaiting' || loadedMapStatus.value.mapStatus === 'started')
 )
 const canEndTurn = computed(() =>
   loadedMapStatus.value?.mapStatus === 'started' &&
@@ -94,7 +102,7 @@ const canEndTurn = computed(() =>
 const myTurnDone = computed(() => mySetup.value?.turn_done ?? false)
 
 const showRightBar = computed(() =>
-  loadedMapStatus.value?.mapStatus === 'ongoing' || loadedMapStatus.value?.mapStatus === 'started'
+  loadedMapStatus.value?.mapStatus === 'awaiting' || loadedMapStatus.value?.mapStatus === 'started'
 )
 
 const appMode = (window as any).hexcommandMode ?? 'game'
@@ -102,13 +110,13 @@ const appMode = (window as any).hexcommandMode ?? 'game'
 const filteredMaps = computed(() =>
   appMode === 'create'
     ? userMaps.value.filter(m => m.mapStatus === 'created')
-    : userMaps.value.filter(m => ['ongoing', 'started', 'ended'].includes(m.mapStatus!))
+    : userMaps.value.filter(m => ['awaiting', 'started', 'ended'].includes(m.mapStatus!))
 )
 const setupLocked = computed(() =>
   loadedMapStatus.value?.mapStatus === 'started' || loadedMapStatus.value?.mapStatus === 'ended'
 )
 
-// Join banner: map is ongoing (validated), not owner, not linked/pending
+// Join banner: map is awaiting (validated), not owner, not linked/pending
 const showJoinBanner = computed(() =>
   loadedMapStatus.value !== null &&
   !loadedMapStatus.value.is_owner &&
@@ -138,14 +146,37 @@ const allCitiesSet = computed(() => {
   )
 })
 
+// Shown while the map is being set up but not everyone has picked a city yet
+const waitingForPlayers = computed(() =>
+  loadedMapStatus.value?.mapStatus === 'awaiting' && !allCitiesSet.value
+)
+
+const AUTO_START_WAIT    = 60   // seconds without any setup change before the game auto-starts
+const AUTO_START_POLL_MS = 2000 // how often every player asks the server if the countdown should begin
+
 const autoStartSecondsLeft = computed<number | null>(() => {
-  if (loadedMapStatus.value?.mapStatus !== 'ongoing') return null
+  if (loadedMapStatus.value?.mapStatus !== 'awaiting') return null
   if (!allCitiesSet.value) return null
   const lastSetup = loadedMapStatus.value.last_setup_at ?? 0
   if (!lastSetup) return null
-  const remaining = 30 - (nowTick.value - lastSetup)
+  const remaining = AUTO_START_WAIT - (nowTick.value - lastSetup)
   return remaining > 0 ? remaining : 0
 })
+
+// Every player polls the server every 2 seconds while the map is 'awaiting' —
+// both while waiting for the others to be ready, and once the countdown is
+// running. This is what detects the moment everyone becomes ready (starting
+// the countdown), picks up a reset if anyone changes their setup, and triggers
+// the server's own auto-start check once the wait has elapsed.
+let autoStartPollInterval: ReturnType<typeof setInterval> | null = null
+watch(() => loadedMapStatus.value?.mapStatus, (status) => {
+  if (status === 'awaiting' && !autoStartPollInterval) {
+    autoStartPollInterval = setInterval(() => { refreshPlayers() }, AUTO_START_POLL_MS)
+  } else if (status !== 'awaiting' && autoStartPollInterval) {
+    clearInterval(autoStartPollInterval)
+    autoStartPollInterval = null
+  }
+}, { immediate: true })
 
 // Map status label for toolbar
 const mapStatus = computed(() => {
@@ -153,8 +184,8 @@ const mapStatus = computed(() => {
   if (!s) return null
   if (s.mapStatus === 'ended')   return { label: '💀 Game Ended',   cls: 'status-ended' }
   if (s.mapStatus === 'started') return { label: '⚔️ Game Started', cls: 'status-started' }
-  if (s.mapStatus === 'ongoing') return { label: '🔒 Map Locked',   cls: 'status-locked' }
-  if (s.mapStatus === 'created') return { label: '✏️ In Progress',  cls: 'status-ongoing' }
+  if (s.mapStatus === 'awaiting') return { label: '🔒 Map Locked',   cls: 'status-locked' }
+  if (s.mapStatus === 'created') return { label: '✏️ In Progress',  cls: 'status-awaiting' }
   return null
 })
 
@@ -168,8 +199,13 @@ const showForceStartConfirm = ref(false)
 const isSelectingCity = ref(false)
 const isClaiming      = ref(false)
 const isBuyingArmy    = ref(false)
+const isBuyingSpy     = ref(false)
+const isBuyingSettler = ref(false)
+const isBuyingFarmer  = ref(false)
 const isMovingArmy    = ref(false)
 const selectedArmyId  = ref<number | null>(null)
+const inspectedArmy   = ref<import('@/composables/useMapIO').Army | null>(null)
+const pendingMerge    = ref<{ sourceId: number; sourcePower: number; targetId: number; targetPower: number; q: number; r: number } | null>(null)
 // Current user's full setup (with actions) from allPlayerSetups
 const mySetup = computed(() => {
   if (!currentUserId.value) return null
@@ -268,20 +304,43 @@ async function handleConfirmSave(name: string) {
 }
 
 function handleClickHex(e: { q: number; r: number }) {
+  selectedQ.value = e.q
+  selectedR.value = e.r
   if (isSelectingCity.value) { selectHex(e.q, e.r); return }
   if (isMovingArmy.value && selectedArmyId.value !== null) { handleMoveArmy(e.q, e.r); return }
   if (isBuyingArmy.value) { handleBuyArmy(e.q, e.r); return }
+  if (isBuyingSpy.value) { handleBuySpy(e.q, e.r); return }
+  if (isBuyingSettler.value) { handleBuySettler(e.q, e.r); return }
+  if (isBuyingFarmer.value) { handleBuyFarmer(e.q, e.r); return }
   if (isClaiming.value) { handleClaimTile(e.q, e.r); return }
+  inspectedArmy.value = null
   if (!canEdit.value) return
   playTileClick()
   onClickHex(e.q, e.r)
 }
 
+// Is this tile one of the current player's own CITIES? (farms don't count —
+// units can only be bought in cities)
+function isOwnBuildingTile(q: number, r: number): boolean {
+  return buildings.value.some(b =>
+    b.user_id === currentUserId.value && b.building_type !== 'farm' && b.q === q && b.r === r
+  )
+}
+
 function handleClickArmy(armyId: number) {
-  // Only allow selecting own armies during game
+  // Only allow interacting with armies during an active game
   if (loadedMapStatus.value?.mapStatus !== 'started') return
   const army = armies.value.find(a => a.id === armyId)
-  if (!army || army.user_id !== currentUserId.value) return
+  if (!army) return
+
+  if (army.user_id !== currentUserId.value) {
+    // Enemy unit — a spy (or general vision) let us see it, so inspect its power.
+    // Clicking the same enemy again closes the panel.
+    inspectedArmy.value = inspectedArmy.value?.id === armyId ? null : army
+    return
+  }
+
+  inspectedArmy.value = null
   if (selectedArmyId.value === armyId) {
     // Deselect
     selectedArmyId.value = null
@@ -291,14 +350,16 @@ function handleClickArmy(armyId: number) {
     isMovingArmy.value = true
     isClaiming.value = false
     isBuyingArmy.value = false
+    isBuyingSpy.value = false
+    isBuyingSettler.value = false
+    isBuyingFarmer.value = false
   }
 }
 
 async function handleBuyArmy(q: number, r: number) {
   if (!loadedMapStatus.value) return
-  const myCity = allPlayerSetups.value.find(s => s.user_id === currentUserId.value)
-  if (!myCity || myCity.city_q !== q || myCity.city_r !== r) {
-    showMsg('Armies can only be built on your city tile')
+  if (!isOwnBuildingTile(q, r)) {
+    showMsg('Armies can only be built on one of your cities')
     return
   }
   try {
@@ -308,8 +369,86 @@ async function handleBuyArmy(q: number, r: number) {
   } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot buy army') }
 }
 
+async function handleBuySpy(q: number, r: number) {
+  if (!loadedMapStatus.value) return
+  if (!isOwnBuildingTile(q, r)) {
+    showMsg('Spies can only be built on one of your cities')
+    return
+  }
+  try {
+    await buySpy(loadedMapStatus.value.uid, q, r)
+    isBuyingSpy.value = false
+    showMsg('Spy deployed!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot buy spy') }
+}
+
+async function handleBuySettler(q: number, r: number) {
+  if (!loadedMapStatus.value) return
+  if (!isOwnBuildingTile(q, r)) {
+    showMsg('Settlers can only be built on one of your cities')
+    return
+  }
+  try {
+    await buySettler(loadedMapStatus.value.uid, q, r)
+    isBuyingSettler.value = false
+    showMsg('Settler deployed!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot buy settler') }
+}
+
+async function handleBuyFarmer(q: number, r: number) {
+  if (!loadedMapStatus.value) return
+  if (!isOwnBuildingTile(q, r)) {
+    showMsg('Farmers can only be built on one of your cities')
+    return
+  }
+  try {
+    await buyFarmer(loadedMapStatus.value.uid, q, r)
+    isBuyingFarmer.value = false
+    showMsg('Farmer deployed!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot buy farmer') }
+}
+
+async function handleFoundFarm(unitId: number) {
+  if (!loadedMapStatus.value) return
+  try {
+    await foundFarm(loadedMapStatus.value.uid, unitId)
+    selectedArmyId.value = null
+    isMovingArmy.value = false
+    showMsg('Farm built!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot build a farm here') }
+}
+
+async function handleFoundCity(unitId: number) {
+  if (!loadedMapStatus.value) return
+  try {
+    await foundCity(loadedMapStatus.value.uid, unitId)
+    selectedArmyId.value = null
+    isMovingArmy.value = false
+    showMsg('City founded!')
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot found city here') }
+}
+
 async function handleMoveArmy(q: number, r: number) {
   if (!loadedMapStatus.value || selectedArmyId.value === null) return
+
+  // If a friendly army already sits on the target tile, offer to merge instead of moving
+  const selected = armies.value.find(a => a.id === selectedArmyId.value)
+  if (selected && selected.unit_type === 'army') {
+    const friendly = armies.value.find(a =>
+      a.id !== selected.id && a.user_id === currentUserId.value && a.unit_type === 'army' && a.q === q && a.r === r
+    )
+    if (friendly) {
+      pendingMerge.value = {
+        sourceId: selected.id,
+        sourcePower: selected.power,
+        targetId: friendly.id,
+        targetPower: friendly.power,
+        q, r,
+      }
+      return
+    }
+  }
+
   try {
     const { combat } = await moveArmy(loadedMapStatus.value.uid, selectedArmyId.value, q, r)
     if (combat) {
@@ -344,6 +483,18 @@ async function handleMoveArmy(q: number, r: number) {
       showPopIn('🏁 The game has ended — all players have been eliminated or resigned.', 'battle')
     }
   } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot move army') }
+}
+
+async function confirmMergeArmy() {
+  if (!loadedMapStatus.value || !pendingMerge.value) return
+  const { sourceId, q, r } = pendingMerge.value
+  try {
+    await mergeArmy(loadedMapStatus.value.uid, sourceId, q, r)
+    showMsg('Armies merged!')
+    selectedArmyId.value = null
+    isMovingArmy.value = false
+  } catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cannot merge armies') }
+  pendingMerge.value = null
 }
 
 async function handleClaimTile(q: number, r: number) {
@@ -421,7 +572,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (countdownInterval) clearInterval(countdownInterval)
+  if (autoStartPollInterval) clearInterval(autoStartPollInterval)
 })
 </script>
 
@@ -478,6 +629,7 @@ onUnmounted(() => {
         :chat-messages="chatMessages"
         :current-user-id="currentUserId"
         :all-player-setups="allPlayerSetups"
+        :hexes="hexes"
         @terrain-change="handleTerrainChange"
         @generate="buildMapRandom"
         @reset-procedural="resetProceduralSettings"
@@ -502,12 +654,17 @@ onUnmounted(() => {
           :player-setups="allPlayerSetups"
           :owned-tiles="ownedTiles"
           :armies="armies"
+          :buildings="buildings"
           :claiming-mode="isClaiming"
           :selected-army-id="selectedArmyId"
           :moving-mode="isMovingArmy"
           :buying-army-mode="isBuyingArmy"
+          :buying-spy-mode="isBuyingSpy"
+          :buying-settler-mode="isBuyingSettler"
+          :buying-farmer-mode="isBuyingFarmer"
           :current-user-id="currentUserId"
           :back-vis = "backVis"
+          :map-status="loadedMapStatus?.mapStatus"
           @click-hex="handleClickHex"
           @click-army="e => handleClickArmy(e.armyId)"
           @hover-hex="handleHoverHex"
@@ -525,6 +682,15 @@ onUnmounted(() => {
             <button class="ended-overlay__close" @click="hideEndedOverlay = true">Watch the map ›</button>
           </div>
         </div>
+
+        <!-- Directional pad — pans the map without needing mouse-drag -->
+        <div class="dpad">
+          <button class="dpad__btn dpad__btn--up" title="Pan up" @click="panBy(0, 1)">▲</button>
+          <button class="dpad__btn dpad__btn--left" title="Pan left" @click="panBy(1, 0)">◀</button>
+          <button class="dpad__btn dpad__btn--center" title="Recenter" @click="resetView">●</button>
+          <button class="dpad__btn dpad__btn--right" title="Pan right" @click="panBy(-1, 0)">▶</button>
+          <button class="dpad__btn dpad__btn--down" title="Pan down" @click="panBy(0, -1)">▼</button>
+        </div>
       </div>
       <MapRightBar
         v-if="showRightBar"
@@ -534,26 +700,44 @@ onUnmounted(() => {
         :existing-setup="mySetup"
         :is-selecting-city="isSelectingCity"
         :all-player-setups="allPlayerSetups"
+        :buildings="buildings"
         :is-claiming="isClaiming"
         :is-buying-army="isBuyingArmy"
+        :is-buying-spy="isBuyingSpy"
+        :is-buying-settler="isBuyingSettler"
+        :is-buying-farmer="isBuyingFarmer"
         :is-moving-army="isMovingArmy"
         :selected-army="isMovingArmy && selectedArmyId ? armies.find(a => a.id === selectedArmyId) ?? null : null"
+        :inspected-army="inspectedArmy"
         @rename-army="(id, name) => loadedMapStatus && renameArmy(loadedMapStatus.uid, id, name)"
         @upgrade-army="(id: number, res: number) => loadedMapStatus && upgradeArmy(loadedMapStatus.uid, id, res).catch((e: Error) => showMsg(e.message))"
+        @found-city="(id: number) => handleFoundCity(id)"
+        @found-farm="(id: number) => handleFoundFarm(id)"
         @save-setup="handleSaveSetup"
         @start-city-select="isSelectingCity = true"
         @cancel-city-select="isSelectingCity = false"
-        @toggle-claim="isClaiming = !isClaiming; isMovingArmy = false; selectedArmyId = null"
-        @toggle-buy-army="isBuyingArmy = !isBuyingArmy; isMovingArmy = false; selectedArmyId = null"
+        @toggle-claim="isClaiming = !isClaiming; isMovingArmy = false; selectedArmyId = null; inspectedArmy = null"
+        @toggle-buy-army="isBuyingArmy = !isBuyingArmy; isBuyingSpy = false; isBuyingSettler = false; isBuyingFarmer = false; isMovingArmy = false; selectedArmyId = null; inspectedArmy = null"
+        @toggle-buy-spy="isBuyingSpy = !isBuyingSpy; isBuyingArmy = false; isBuyingSettler = false; isBuyingFarmer = false; isMovingArmy = false; selectedArmyId = null; inspectedArmy = null"
+        @toggle-buy-settler="isBuyingSettler = !isBuyingSettler; isBuyingArmy = false; isBuyingSpy = false; isBuyingFarmer = false; isMovingArmy = false; selectedArmyId = null; inspectedArmy = null"
+        @toggle-buy-farmer="isBuyingFarmer = !isBuyingFarmer; isBuyingArmy = false; isBuyingSpy = false; isBuyingSettler = false; isMovingArmy = false; selectedArmyId = null; inspectedArmy = null"
         @cancel-move-army="isMovingArmy = false; selectedArmyId = null"
+        @close-inspect-army="inspectedArmy = null"
         @color-change="playerBorderColor = $event"
       />
     </div>
 
+    <!-- Waiting for other players banner -->
+    <Transition name="popin">
+      <div v-if="waitingForPlayers" class="autostart-banner">
+        ⏳ Waiting for other players to choose their starting point...
+      </div>
+    </Transition>
+
     <!-- Auto-start countdown banner -->
     <Transition name="popin">
       <div v-if="autoStartSecondsLeft !== null" class="autostart-banner">
-        🏰 All players have selected a starting point. Game will start in:
+        All players have selected a starting point. Game will start in:
         <strong class="autostart-count">{{ autoStartSecondsLeft }}s</strong>
       </div>
     </Transition>
@@ -576,7 +760,7 @@ onUnmounted(() => {
       @cancel="showSaveModal = false"
     />
     <ChatBox
-      v-if="loadedMapStatus"
+      v-if="loadedMapStatus && loadedMapStatus?.mapStatus !== 'created' && loadedMapStatus?.players.length > 0"
       :messages="chatMessages"
       :current-user-id="currentUserId"
       :popped="true"
@@ -627,6 +811,20 @@ onUnmounted(() => {
         <div class="confirm-actions">
           <button class="btn-danger" @click="confirmResign">🏳 Resign</button>
           <button class="btn-cancel" @click="showResignConfirm = false">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Merge army confirm -->
+    <div v-if="pendingMerge" class="modal-overlay" @click.self="pendingMerge = null">
+      <div class="confirm-modal">
+        <p>Merge with your friendly army here?</p>
+        <p class="confirm-hint">
+          ⚔️ {{ pendingMerge.sourcePower }} + ⚔️ {{ pendingMerge.targetPower }} → ⚔️ {{ pendingMerge.sourcePower + pendingMerge.targetPower }}
+        </p>
+        <div class="confirm-actions">
+          <button class="btn-confirm" @click="confirmMergeArmy">🤝 Merge</button>
+          <button class="btn-cancel" @click="pendingMerge = null">Cancel</button>
         </div>
       </div>
     </div>

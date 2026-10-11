@@ -201,7 +201,8 @@ function hexcommand_load_map(WP_REST_Request $request): WP_REST_Response {
         'is_owner'   => (int) $post->post_author === $user_id,
         'is_linked'  => in_array($user_id, $linked, true),
         'is_pending' => in_array($user_id, $pending, true),
-        'armies'    => hexcommand_get_armies_for_map($post_id, $user_id),
+        'armies'     => hexcommand_get_armies_for_map($post_id, $user_id),
+        'buildings'  => hexcommand_get_buildings_for_map($post_id),
     ], 200);
 }
 
@@ -366,10 +367,10 @@ function hexcommand_deny_request(WP_REST_Request $request): WP_REST_Response {
 // Starts the game if all players have cities and 30s have passed since last setup save
 // ============================================================
 function hexcommand_maybe_auto_start(int $post_id): bool {
-    if (hexcommand_get_state($post_id) !== 'ongoing') return false;
+    if (hexcommand_get_state($post_id) !== 'awaiting') return false;
 
     $last_setup_at = (int) get_field('last_setup_at', $post_id);
-    if ($last_setup_at === 0 || (time() - $last_setup_at) < 30) return false;
+    if ($last_setup_at === 0 || (time() - $last_setup_at) < 60) return false;
 
     $linked_raw  = get_field('users_linked', $post_id);
     $linked      = array_map('intval', json_decode($linked_raw ?: '[]', true) ?: []);
@@ -433,6 +434,8 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
     $random_user_id = isset($setups_map[$user_id]['randomuserid']) ? (int)$setups_map[$user_id]['randomuserid'] : rand(1,3);
     $existing_actions = isset($setups_map[$user_id]['actions']) ? (int)$setups_map[$user_id]['actions'] : 10;
     $existing_resources = isset($setups_map[$user_id]['resources']) ? (int)$setups_map[$user_id]['resources'] : 0;
+    $old_city_q = isset($setups_map[$user_id]['city_q']) ? $setups_map[$user_id]['city_q'] : null;
+    $old_city_r = isset($setups_map[$user_id]['city_r']) ? $setups_map[$user_id]['city_r'] : null;
     $setups_map[$user_id] = [
         'user_id'   => $user_id,
         'faction'   => $faction,
@@ -445,6 +448,28 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
     ];
     hexcommand_set_json_field($post_id, 'player_setups', array_values($setups_map));
     update_field('last_setup_at', time(), $post_id);
+
+    // Sync the player's capital "building" post so the starting city behaves
+    // exactly like any other building (settler-founded cities included).
+    if ($old_city_q !== null && $old_city_r !== null && ((int)$old_city_q !== $city_q || (int)$old_city_r !== $city_r)) {
+        // City moved (re-picked before game start) — relocate the existing capital building
+        $moved = false;
+        foreach (hexcommand_get_buildings_for_map($post_id) as $b) {
+            if ($b['user_id'] === $user_id && (int)$b['q'] === (int)$old_city_q && (int)$b['r'] === (int)$old_city_r) {
+                hexcommand_set_json_field($b['id'], 'position', ['q' => $city_q, 'r' => $city_r]);
+                $moved = true;
+                break;
+            }
+        }
+        if (!$moved) {
+            hexcommand_create_building($post_id, $user_id, $city_q, $city_r, 'Capital');
+        }
+    } elseif ($old_city_q === null || $old_city_r === null) {
+        // First time setting up — create the capital building if not already present
+        if (!hexcommand_tile_has_building($post_id, $city_q, $city_r)) {
+            hexcommand_create_building($post_id, $user_id, $city_q, $city_r, 'Capital');
+        }
+    }
 
     return new WP_REST_Response([
         'success'      => true,
@@ -469,15 +494,15 @@ function hexcommand_finish_map(WP_REST_Request $request): WP_REST_Response {
         return new WP_REST_Response(['error' => 'Forbidden'], 403);
     }
     $state = get_field('hexmap_state', $post->ID);
-    if ($state === 'ongoing') {
-        return new WP_REST_Response(['error' => 'Map is already ongoing'], 409);
+    if ($state === 'awaiting') {
+        return new WP_REST_Response(['error' => 'Map is already awaiting'], 409);
     }
     else if ($state === 'created') {
         if (!hexcommand_deduct_credits($owner_id, 100)) {
             return new WP_REST_Response(['error' => 'Not enough credits (100 required to validate a map)'], 402);
         }
-        $state = update_field('hexmap_state', 'ongoing', $post->ID);
-        update_field('ongoing_since', time(), $post->ID);
+        $state = update_field('hexmap_state', 'awaiting', $post->ID);
+        update_field('awaiting_since', time(), $post->ID);
     }
 
     return new WP_REST_Response(['success' => true], 200);
@@ -496,7 +521,7 @@ function hexcommand_start_map(WP_REST_Request $request): WP_REST_Response {
 
     $post_id = $post->ID;
     $state   = hexcommand_get_state($post_id);
-    if ($state !== 'ongoing') return new WP_REST_Response(['error' => 'Map must be ongoing to start'], 409);
+    if ($state !== 'awaiting') return new WP_REST_Response(['error' => 'Map must be awaiting to start'], 409);
 
     $linked  = array_map('intval', (array) (hexcommand_get_json_field($post_id, 'users_linked') ?: []));
     $setups  = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
@@ -518,7 +543,7 @@ function hexcommand_start_map(WP_REST_Request $request): WP_REST_Response {
 }
 
 // ============================================================
-// FORCE START — owner only, map ongoing for 24h+
+// FORCE START — owner only, map awaiting for 24h+
 // Resigns players without cities, then starts the game
 // ============================================================
 function hexcommand_force_start(WP_REST_Request $request): WP_REST_Response {
@@ -534,12 +559,12 @@ function hexcommand_force_start(WP_REST_Request $request): WP_REST_Response {
     }
 
     $state = hexcommand_get_state($post_id);
-    if ($state !== 'ongoing') {
-        return new WP_REST_Response(['error' => 'Map must be ongoing'], 409);
+    if ($state !== 'awaiting') {
+        return new WP_REST_Response(['error' => 'Map must be awaiting'], 409);
     }
 
-    $ongoing_since = (int) get_field('ongoing_since', $post_id);
-    if ($ongoing_since > 0 && (time() - $ongoing_since) < 86400) {
+    $awaiting_since = (int) get_field('awaiting_since', $post_id);
+    if ($awaiting_since > 0 && (time() - $awaiting_since) < 86400) {
         return new WP_REST_Response(['error' => 'Must wait 24 hours before force starting'], 409);
     }
 
@@ -580,7 +605,7 @@ function hexcommand_end_map(WP_REST_Request $request): WP_REST_Response {
         return new WP_REST_Response(['error' => 'Forbidden'], 403);
     }
     $state = get_field('hexmap_state', $post->ID);
-    if ($state === 'ongoing') {
+    if ($state === 'awaiting') {
         $state = update_field('hexmap_state', 'ended', $post->ID);
     }
 

@@ -17,7 +17,7 @@ export interface MapSave {
   players?: MapPlayer[]
   hexes: Hex[]
   last_setup_at?: number
-  ongoing_since ?: number
+  awaiting_since?: number
 }
 
 export interface MapListItem {
@@ -56,9 +56,18 @@ export interface Army {
   user_id: number
   hexmap: number
   power: number
+  unit_type: 'army' | 'spy' | 'settler' | 'farmer'
   stats: string
   q: number
   r: number
+}
+
+export interface Building {
+  id: number
+  user_id: number
+  q: number
+  r: number
+  building_type: 'city' | 'farm'
 }
 
 export interface OwnedTile {
@@ -80,7 +89,7 @@ export interface PlayerSetup {
   city_q: number
   city_r: number
   randomUserId: number
-  resigned : boolean
+  resigned?: boolean
 }
 
 export type UserRole = 'player' | 'none'
@@ -117,6 +126,7 @@ export function useMapIO() {
   const allPlayerSetups = ref<PlayerSetupWithId[]>([])
   const ownedTiles = ref<OwnedTile[]>([])
   const armies     = ref<Army[]>([])
+  const buildings  = ref<Building[]>([])
 
   const loadedMapStatus = ref<{
     uid: string
@@ -127,7 +137,7 @@ export function useMapIO() {
     hexturn: number
     players: MapPlayer[]
     last_setup_at: number
-    ongoing_since: number
+    awaiting_since: number
   } | null>(null)
 
   let requestsPollInterval: ReturnType<typeof setInterval> | null = null
@@ -195,10 +205,11 @@ export function useMapIO() {
           loadedMapStatus.value.hexturn   = data.hexturn      ?? loadedMapStatus.value.hexturn
           loadedMapStatus.value.is_linked     = data.is_linked     ?? loadedMapStatus.value.is_linked
           loadedMapStatus.value.last_setup_at = data.last_setup_at ?? loadedMapStatus.value.last_setup_at
-          loadedMapStatus.value.ongoing_since   = data.ongoing_since  ?? loadedMapStatus.value.ongoing_since
+          loadedMapStatus.value.awaiting_since   = data.awaiting_since  ?? loadedMapStatus.value.awaiting_since
           allPlayerSetups.value           = (data.player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
           ownedTiles.value = data.owned_tiles ?? []
           armies.value     = data.armies       ?? []
+          buildings.value  = data.buildings    ?? buildings.value
         }
       }
     } catch { /* silent */ }
@@ -259,7 +270,7 @@ export function useMapIO() {
       lastMapName.value   = json.name
       uidCopied.value     = false
       showUidModal.value  = true
-      // Mark newly saved map as ongoing + owned so canEdit stays true
+      // Mark newly saved map as awaiting + owned so canEdit stays true
       loadedMapStatus.value = {
         uid:         json.hexmap_uid,
         is_owner:    true,
@@ -269,7 +280,7 @@ export function useMapIO() {
         hexturn:     0,
         players:     [],
         last_setup_at: 0,
-        ongoing_since: 0
+        awaiting_since: 0
       }
       await refreshMapList()
     } catch (err) {
@@ -295,7 +306,7 @@ export function useMapIO() {
       is_pending:  data.is_pending  ?? false,
       mapStatus:       data.mapStatus ?? 'created',
       last_setup_at:   data.last_setup_at ?? 0,
-      ongoing_since:   data.ongoing_since ?? 0,
+      awaiting_since:   data.awaiting_since ?? 0,
       hexturn:     data.hexturn   ?? 0,
       players:     data.players     ?? [],
     }
@@ -303,6 +314,7 @@ export function useMapIO() {
     allPlayerSetups.value = ((data as any).player_setups ?? []).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
     ownedTiles.value = (data as any).owned_tiles ?? []
     armies.value     = (data as any).armies       ?? []
+    buildings.value  = (data as any).buildings    ?? []
     return data
   }
 
@@ -323,7 +335,7 @@ export function useMapIO() {
     const json = await res.json()
     if (!res.ok) throw new Error(json.error || 'Failed to finish map')
     if (loadedMapStatus.value?.uid === uid) {
-      loadedMapStatus.value.mapStatus = 'ongoing'
+      loadedMapStatus.value.mapStatus = 'awaiting'
     }
     await refreshMapList()
     showMsg('Map validated and locked!')
@@ -452,6 +464,63 @@ export function useMapIO() {
     if (mySetup) mySetup.resources = json.resources
   }
 
+  async function buySpy(uid: string, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/buySpy`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to buy spy')
+    armies.value = json.armies ?? armies.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.resources = json.resources
+  }
+
+  async function buySettler(uid: string, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/buySettler`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to buy settler')
+    armies.value = json.armies ?? armies.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.resources = json.resources
+  }
+
+  async function buyFarmer(uid: string, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/buyFarmer`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to buy farmer')
+    armies.value = json.armies ?? armies.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.resources = json.resources
+  }
+
+  async function foundFarm(uid: string, unitId: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/foundFarm`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ unit_id: unitId }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to found farm')
+    armies.value    = json.armies    ?? armies.value
+    buildings.value = json.buildings ?? buildings.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.actions = json.actions
+  }
+
+  async function foundCity(uid: string, unitId: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/foundCity`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ unit_id: unitId }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to found city')
+    armies.value    = json.armies    ?? armies.value
+    buildings.value = json.buildings ?? buildings.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.actions = json.actions
+  }
+
   async function upgradeArmy(uid: string, armyId: number, resources: number): Promise<void> {
     const res  = await fetch(`${WP_API}/maps/${uid}/upgradeArmy`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, resources }),
@@ -482,12 +551,24 @@ export function useMapIO() {
     const json = await res.json()
     if (!res.ok) throw new Error(json.error || 'Failed to move army')
     armies.value      = json.armies      ?? armies.value
+    buildings.value   = json.buildings   ?? buildings.value
     ownedTiles.value  = json.owned_tiles ?? ownedTiles.value
     const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
     if (mySetup) mySetup.actions = json.actions
     if (json.mapStatus && loadedMapStatus.value) loadedMapStatus.value.mapStatus = json.mapStatus
     if (json.player_setups) allPlayerSetups.value = (json.player_setups).map((s: any) => ({ ...s, randomUserId: s.randomuserid ?? 1 }))
     return { combat: json.combat ?? null }
+  }
+
+  async function mergeArmy(uid: string, armyId: number, q: number, r: number): Promise<void> {
+    const res  = await fetch(`${WP_API}/maps/${uid}/mergeArmy`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ army_id: armyId, q, r }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'Failed to merge army')
+    armies.value = json.armies ?? armies.value
+    const mySetup = allPlayerSetups.value.find(s => s.user_id === json.user_id)
+    if (mySetup) mySetup.actions = json.actions
   }
 
   async function claimTile(uid: string, q: number, r: number): Promise<void> {
@@ -570,10 +651,10 @@ export function useMapIO() {
 
   return {
     saveMsg, popIn, imageLoaded, showUidModal, lastHexmapUid, lastMapName,
-    uidCopied, userMaps, isLoggedIn, userRole, credits, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies,
+    uidCopied, userMaps, isLoggedIn, userRole, credits, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, buildings,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers, showPopIn,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endTurn, resignMap, forceStart, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, moveArmy, renameArmy, upgradeArmy,
+    finishMap, startMap, endTurn, resignMap, forceStart, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, buySpy, buySettler, foundCity, moveArmy, mergeArmy, renameArmy, upgradeArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }

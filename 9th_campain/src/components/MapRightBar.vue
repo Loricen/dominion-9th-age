@@ -18,7 +18,7 @@ const BORDER_COLORS = Object.freeze([
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { PlayerSetup, PlayerSetupWithId } from '@/composables/useMapIO'
+import type { PlayerSetup, PlayerSetupWithId, Building } from '@/composables/useMapIO'
 
 const props = defineProps<{
   mapStatus: string
@@ -26,11 +26,16 @@ const props = defineProps<{
   existingSetup: PlayerSetupWithId | null
   isSelectingCity: boolean
   allPlayerSetups: PlayerSetupWithId[]
+  buildings?: Building[]
   setupLocked: boolean
   isClaiming: boolean
   isBuyingArmy: boolean
+  isBuyingSpy: boolean
+  isBuyingSettler: boolean
+  isBuyingFarmer: boolean
   isMovingArmy: boolean
   selectedArmy: import('@/composables/useMapIO').Army | null
+  inspectedArmy?: import('@/composables/useMapIO').Army | null
 }>()
 
 const emit = defineEmits<{
@@ -40,9 +45,15 @@ const emit = defineEmits<{
   colorChange: [color: string]
   toggleClaim: []
   toggleBuyArmy: []
+  toggleBuySpy: []
+  toggleBuySettler: []
+  toggleBuyFarmer: []
   cancelMoveArmy: []
   renameArmy: [id: number, name: string]
   upgradeArmy: [id: number, resources: number]
+  foundCity: [id: number]
+  foundFarm: [id: number]
+  closeInspectArmy: []
 }>()
 
 const selectedFaction  = ref(props.existingSetup?.faction   ?? '')
@@ -50,7 +61,13 @@ const selectedColor    = ref<string>(props.existingSetup?.color ?? '#ffba00')
 const cityQ            = ref(props.existingSetup?.city_q    ?? null as number | null)
 const cityR            = ref(props.existingSetup?.city_r    ?? null as number | null)
 const randomUser_Id     = ref(props.existingSetup?.randomUserId    ?? null as number | null)
-const resigned          = ref(props.existingSetup?.resigned    ?? null as boolean | null)
+
+const inspectedOwnerSetup = computed(() =>
+  props.inspectedArmy ? props.allPlayerSetups.find(s => s.user_id === props.inspectedArmy!.user_id) ?? null : null
+)
+const inspectedFactionLabel = computed(() =>
+  FACTIONS.find(f => f.id === inspectedOwnerSetup.value?.faction)?.label ?? inspectedOwnerSetup.value?.faction ?? 'Unknown'
+)
 
 const cityLabel = computed(() => {
   if (cityQ.value !== null && cityR.value !== null)
@@ -68,9 +85,21 @@ const myActions      = computed(() => props.existingSetup?.actions   ?? 0)
 const myResources    = computed(() => props.existingSetup?.resources ?? 0)
 const armyOnCity     = computed(() =>
   props.selectedArmy !== null &&
-  props.existingSetup !== null &&
-  props.selectedArmy.q === props.existingSetup.city_q &&
-  props.selectedArmy.r === props.existingSetup.city_r
+  (props.buildings ?? []).some(b =>
+    b.user_id === props.existingSetup?.user_id &&
+    b.q === props.selectedArmy!.q &&
+    b.r === props.selectedArmy!.r
+  )
+)
+const isSettlerSelected = computed(() => props.selectedArmy?.unit_type === 'settler')
+const isFarmerSelected  = computed(() => props.selectedArmy?.unit_type === 'farmer')
+const canFoundFarmHere  = computed(() =>
+  props.isMovingArmy && isFarmerSelected.value && props.selectedArmy != null &&
+  !(props.buildings ?? []).some(b => b.q === props.selectedArmy!.q && b.r === props.selectedArmy!.r)
+)
+const canFoundCityHere  = computed(() =>
+  props.isMovingArmy && isSettlerSelected.value && props.selectedArmy != null &&
+  !(props.buildings ?? []).some(b => b.q === props.selectedArmy!.q && b.r === props.selectedArmy!.r)
 )
 const upgradePowerGain = computed(() => Math.floor(upgradeAmount.value / 10))
 const upgradeMaxAmount = computed(() => Math.floor(myResources.value / 10) * 10)
@@ -102,8 +131,7 @@ function save() {
     color:   selectedColor.value,
     city_q:  cityQ.value!,
     city_r:  cityR.value!,
-    randomUserId: randomUser_Id.value!,
-    resigned: resigned.value!
+    randomUserId: randomUser_Id.value!
   })
 }
 </script>
@@ -124,6 +152,27 @@ function save() {
       </div>
     </div>
 
+    <!-- ── Enemy unit inspection — spotted via spy/vision, read-only ── -->
+    <template v-else-if="inspectedArmy">
+      <div class="rightbar-title">🔎 Enemy Unit Spotted</div>
+      <div class="rb-section">
+        <div class="rb-label">Faction</div>
+        <div class="setup-value" :style="{ color: inspectedOwnerSetup?.color }">{{ inspectedFactionLabel }}</div>
+      </div>
+      <div class="rb-section">
+        <div class="rb-label">Unit</div>
+        <div class="setup-value">
+          {{ inspectedArmy.unit_type === 'spy' ? '🕵️ Spy' : inspectedArmy.unit_type === 'settler' ? '🏗️ Settler' : inspectedArmy.unit_type === 'farmer' ? '🌾 Farmer' : '⚔️ Army' }}
+          — {{ inspectedArmy.name }}
+        </div>
+      </div>
+      <div v-if="inspectedArmy.unit_type === 'army'" class="rb-section">
+        <div class="rb-label">Strength</div>
+        <div class="army-power">⚔️ {{ inspectedArmy.power }}</div>
+      </div>
+      <button class="btn-cancel" style="margin-top: 12px" @click="emit('closeInspectArmy')">✕ Close</button>
+    </template>
+
     <!-- ── Army panel — shown when an army is selected (must be before setupLocked) ── -->
     <template v-else-if="isMovingArmy && selectedArmy">
       <div class="rightbar-title">⚔️ Army Selected</div>
@@ -136,7 +185,7 @@ function save() {
 
       <!-- Army name + rename -->
       <div class="rb-section">
-        <div class="rb-label">Army Name</div>
+        <div class="rb-label">Unit Name</div>
         <div v-if="!renamingArmy" class="army-name-row">
           <span class="setup-value">{{ selectedArmy.name }}</span>
           <button class="btn-rename" @click="renamingArmy = true">✏️</button>
@@ -155,8 +204,8 @@ function save() {
         </div>
       </div>
 
-      <!-- Strength -->
-      <div class="rb-section">
+      <!-- Strength (armies & spies only — settlers have no combat power) -->
+      <div v-if="!isSettlerSelected && !isFarmerSelected" class="rb-section">
         <div class="rb-label">Strength</div>
         <div class="army-power-row">
           <span class="army-power">⚔️ {{ selectedArmy.power }}</span>
@@ -166,12 +215,7 @@ function save() {
             :title="!armyOnCity ? 'Army must be on your city to upgrade' : myResources < 10 ? 'Not enough resources' : 'Upgrade army'"
             :disabled="!armyOnCity || myResources < 10"
             @click="upgradingArmy = !upgradingArmy; upgradeAmount = Math.min(10, upgradeMaxAmount)"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" id="Capa_1" x="0px" y="0px" viewBox="0 0 800 800" style="enable-background:new 0 0 800 800;" xml:space="preserve">
-              <g>
-                <polygon class="st0" points="526.5,779 526.5,388.1 766.9,388.1 400.1,21 33,388.1 273.8,388.1 273.8,779   "/>
-              </g>
-            </svg></button>
+          >⬆</button>
         </div>
 
         <!-- Upgrade pop-in -->
@@ -196,11 +240,42 @@ function save() {
         </div>
       </div>
 
+      <!-- Found Farm (farmers only) -->
+      <div v-if="isFarmerSelected" class="rb-section">
+        <div class="rb-label">Farmer</div>
+        <div class="setup-value" style="margin-bottom: 6px">🌾 Can build a farm on one of your resource-bonus tiles (doubles its output).</div>
+        <button
+          class="btn-claim"
+          :class="{ active: canFoundFarmHere }"
+          :disabled="!canFoundFarmHere"
+          :title="canFoundFarmHere ? 'Build a farm here' : 'A building already exists on this tile'"
+          @click="emit('foundFarm', selectedArmy.id)"
+        >
+          🌾 Build Farm
+        </button>
+      </div>
+
+      <!-- Found City (settlers only) -->
+      <div v-if="isSettlerSelected" class="rb-section">
+        <div class="rb-label">Settler</div>
+        <div class="setup-value" style="margin-bottom: 6px">🏗️ Can found a new city on a qualifying resource tile.</div>
+        <button
+          class="btn-claim"
+          :class="{ active: canFoundCityHere }"
+          :disabled="!canFoundCityHere"
+          :title="canFoundCityHere ? 'Found a city here' : 'A city already exists on this tile'"
+          @click="emit('foundCity', selectedArmy.id)"
+        >
+          🏛️ Found City
+        </button>
+      </div>
+
       <!-- Actions -->
       <div class="rb-section">
         <div class="rb-label">Actions <span class="actions-count">{{ myActions }} / {{ actionsMax }}</span></div>
         <div class="actions-gauge">
-          <div class="actions-fill"
+          <div
+            class="actions-fill"
             :style="{ width: (myActions / actionsMax * 100) + '%', background: myActions > 3 ? '#4adf8a' : myActions > 0 ? '#ffba00' : '#df4a4a' }"
           />
         </div>
@@ -216,20 +291,11 @@ function save() {
       <div class="rightbar-title">⚔️ My Setup</div>
       <div v-if="existingSetup" class="rb-section">
         <div class="rb-label">Faction</div>
+        <div class="color-preview">
+          <span class="color-sample" :style="{ background: existingSetup.color }"> <span class="color-hex">{{ existingSetup.color }}</span></span>
+        </div>
         <div class="setup-value">{{ FACTIONS.find(f => f.id === existingSetup?.faction)?.label ?? existingSetup?.faction }}</div>
       </div>
-      <div v-if="existingSetup" class="rb-section">
-        <div class="rb-label">Border Colour</div>
-        <div class="color-preview">
-          <span class="color-sample" :style="{ background: existingSetup.color }" />
-          <span class="color-hex">{{ existingSetup.color }}</span>
-        </div>
-      </div>
-      <div v-if="existingSetup" class="rb-section">
-        <div class="rb-label">Starting City</div>
-        <div class="setup-value city-coords set">🏰 ({{ existingSetup.city_q }}, {{ existingSetup.city_r }})</div>
-      </div>
-
       <!-- Actions gauge -->
       <div class="rb-section">
         <div class="rb-label">Actions <span class="actions-count">{{ myActions }} / {{ actionsMax }}</span></div>
@@ -266,13 +332,30 @@ function save() {
         >
           {{ isBuyingArmy ? '✕ Cancel' : '⚔️ Buy Army (500)' }}
         </button>
+        <button
+          class="btn-claim"
+          :class="{ active: isBuyingSpy }"
+          :disabled="myResources < 2000"
+          :title="myResources < 2000 ? 'Need 2000 resources' : 'Spies reveal fog of war around them'"
+          @click="emit('toggleBuySpy')"
+          style="margin-top: 6px"
+        >
+          {{ isBuyingSpy ? '✕ Cancel' : '🕵️ Buy Spy (2000)' }}
+        </button>
+        <button
+          class="btn-claim"
+          :class="{ active: isBuyingSettler }"
+          :disabled="myResources < 5000"
+          :title="myResources < 5000 ? 'Need 5000 resources' : 'Settlers can found new cities'"
+          @click="emit('toggleBuySettler')"
+          style="margin-top: 6px"
+        >
+          {{ isBuyingSettler ? '✕ Cancel' : '🏕️ Buy Settler (5000)' }}
+        </button>
       </div>
     </template>
 
     <template v-else>
-
-      <!-- Header -->
-      <div class="rightbar-title">⚔️ My Setup</div>
 
       <!-- Faction -->
       <div class="rb-section">

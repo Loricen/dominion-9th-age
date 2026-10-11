@@ -53,8 +53,8 @@ add_shortcode('hexcommand_mapslist', function () {
     }
 
     $status_label = [
-        'created'  => 'Setup',
-        'ongoing'  => 'Ongoing',
+        'created'  => 'Creation',
+        'awaiting'  => 'Waiting Players',
         'started'  => 'In Progress',
         'ended'    => 'Ended',
     ];
@@ -93,7 +93,7 @@ add_shortcode('hexcommand_mapslist', function () {
     .hexcommand-table tbody tr:hover { background: #1a2233; }
     .hc-status { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
     .hc-status--created  { background: #2a3a1a; color: #7bea27; }
-    .hc-status--ongoing  { background: #1a2a3a; color: #4a90d9; }
+    .hc-status--awaiting  { background: #1a2a3a; color: #4a90d9; }
     .hc-status--started  { background: #3a2a1a; color: #ffba00; }
     .hc-status--ended    { background: #2a1a1a; color: #df4a4a; }
     .hc-btn { display: inline-block; padding: 4px 14px; background: #1a3a5a; color: #88b5f1; border-radius: 6px; text-decoration: none; font-size: 13px; }

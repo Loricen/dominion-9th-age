@@ -154,7 +154,7 @@ Base route:
 ### Map (hexmap post type)
 
 * `hexmap_uid` → Unique identifier
-* `hexmap_state` → created | ongoing | ended
+* `hexmap_state` → created | awaiting | ended
 * `hexmap_data` → JSON hex grid
 * `_hexmap_cols`, `_hexmap_rows`, `_hexmap_size`
 * `users_linked` → Approved players
