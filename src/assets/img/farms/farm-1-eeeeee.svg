@@ -11,8 +11,8 @@
 <g>
 	<g>
 		<linearGradient id="SVGID_1_" gradientUnits="userSpaceOnUse" x1="14.4327" y1="10.089" x2="19.8089" y2="13.4031">
-		<stop  offset="0" style="stop-color:#FFFFFF"/>
-		<stop  offset="1" style="stop-color:#81817C"/>
+		<stop  offset="0" style="stop-color:#D6CCBA"/>
+		<stop  offset="1" style="stop-color:#867C62"/>
 		</linearGradient>
 		<polygon class="st0" points="12.1,13.3 15.6,15.2 21,12.3 21,9.5 15.4,12.3 13.7,9.8 12.1,10.6 		"/>
 		<line class="st1" x1="13.7" y1="9.8" x2="11.8" y2="10.8"/>
@@ -36,8 +36,8 @@
 		<polyline class="st1" points="15.6,14.8 11.9,16.9 0.8,10.7 10.8,5.6 16,8.5 		"/>
 	</g>
 	<linearGradient id="SVGID_2_" gradientUnits="userSpaceOnUse" x1="16.5104" y1="8.488" x2="18.5686" y2="11.0187">
-		<stop  offset="0" style="stop-color:#FF8C00"/>
-		<stop  offset="1" style="stop-color:#643600"/>
+				<stop  offset="0" style="stop-color:#FFFFFF"/>
+				<stop  offset="1" style="stop-color:#81817C"/>
 	</linearGradient>
 	<polygon class="st3" points="13.7,9.8 15.4,12.3 21.2,9.3 19.3,6.7 	"/>
 </g>

@@ -500,7 +500,7 @@ function buildingColor(e: Building): string {
               :y="hexCenter(building.q, building.r)[1] - 6.5"
               width="17"
               height="17"
-              :href="building.building_type === 'farm' ? `/src/assets/img/farms/farm-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 2) + 1}`+buildingColor(building).replace('#','')+`.svg` : `/src/assets/img/towns/town-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 3) + 1}-`+buildingColor(building).replace('#','')+`.svg`"
+              :href="building.building_type === 'farm' ? `/src/assets/img/farms/farm-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 2) + 1}-`+buildingColor(building).replace('#','')+`.svg` : `/src/assets/img/towns/town-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 3) + 1}-`+buildingColor(building).replace('#','')+`.svg`"
               style="pointer-events: none" />
           </template>
         </g>
