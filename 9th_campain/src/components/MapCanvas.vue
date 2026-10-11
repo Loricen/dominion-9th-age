@@ -500,7 +500,7 @@ function buildingColor(e: Building): string {
               :y="hexCenter(building.q, building.r)[1] - 6.5"
               width="17"
               height="17"
-              :href="building.building_type === 'farm' ? '/src/assets/img/farm-1.svg' : `/src/assets/img/towns/town-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 3) + 1}-`+buildingColor(building).replace('#','')+`.svg`"
+              :href="building.building_type === 'farm' ? `/src/assets/img/farms/farm-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 2) + 1}`+buildingColor(building).replace('#','')+`.svg` : `/src/assets/img/towns/town-${(Math.abs(building.q * 73856093 ^ building.r * 19349663) % 3) + 1}-`+buildingColor(building).replace('#','')+`.svg`"
               style="pointer-events: none" />
           </template>
         </g>
@@ -525,7 +525,7 @@ function buildingColor(e: Building): string {
               :y="hexCenter(army.q!, army.r!)[1]-7"
               width="10"
               height="10"
-              :href="army.unit_type === 'spy' ? '/src/assets/img/spy-'+UnitColor(army).replace('#','')+'.svg' : army.unit_type === 'settler' ? '/src/assets/img/settler-'+UnitColor(army).replace('#','')+'.svg' : army.unit_type === 'farmer' ? '/src/assets/img/farmer-1.svg' : '/src/assets/img/army-'+UnitColor(army).replace('#','')+'.svg'"
+              :href="army.unit_type === 'spy' ? '/src/assets/img/spy-'+UnitColor(army).replace('#','')+'.svg' : (army.unit_type === 'settler'|| army.unit_type ==='farmer') ? '/src/assets/img/settler-'+UnitColor(army).replace('#','')+'.svg' : '/src/assets/img/army-'+UnitColor(army).replace('#','')+'.svg'"
               :opacity="(army.unit_type === 'spy' || army.unit_type === 'settler' || army.unit_type === 'farmer') && army.user_id === currentUserId ? 0.85 : 1"
               style="user-select: none; cursor: pointer"
               @click.stop="emit('clickArmy', { armyId: army.id })" />

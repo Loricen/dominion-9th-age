@@ -352,6 +352,16 @@ function save() {
         >
           {{ isBuyingSettler ? '✕ Cancel' : '🏕️ Buy Settler (5000)' }}
         </button>
+        <button
+          class="btn-claim"
+          :class="{ active: isBuyingFarmer }"
+          :disabled="myResources < 300"
+          :title="myResources < 300 ? 'Need 300 resources' : 'Farmers can build farms on your resource-bonus tiles'"
+          @click="emit('toggleBuyFarmer')"
+          style="margin-top: 6px"
+        >
+          {{ isBuyingFarmer ? '✕ Cancel' : '🌾 Buy Farmer (300)' }}
+        </button>
       </div>
     </template>
 

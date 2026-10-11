@@ -654,7 +654,7 @@ export function useMapIO() {
     uidCopied, userMaps, isLoggedIn, userRole, credits, currentUserId, chatMessages, joinRequests, loadedMapStatus, playerSetup, allPlayerSetups, ownedTiles, armies, buildings,
     showMsg, checkAuth, refreshMapList, refreshRequests, refreshPlayers, showPopIn,
     downloadMap, saveToServer, loadFromServer, deleteFromServer,
-    finishMap, startMap, endTurn, resignMap, forceStart, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, buySpy, buySettler, foundCity, moveArmy, mergeArmy, renameArmy, upgradeArmy,
+    finishMap, startMap, endTurn, resignMap, forceStart, claimTile, requestJoinMap, approveRequest, denyRequest, savePlayerSetup, buyArmy, buySpy, buySettler,  buyFarmer, foundCity, foundFarm, moveArmy, mergeArmy, renameArmy, upgradeArmy,
     loadMapFromFile, loadImageAsCanvas, copyUidToClipboard, fetchChat, sendChat,
   }
 }
