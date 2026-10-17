@@ -6,11 +6,13 @@
 	.st0{fill:url(#SVGID_1_);stroke:#231F20;stroke-width:0.4252;stroke-miterlimit:10;}
 	.st1{fill:none;stroke:#231F20;stroke-width:0.4252;stroke-miterlimit:10;}
 	.st2{fill:#231F20;}
-	.st3{fill:url(#SVGID_2_);stroke:#231F20;stroke-width:0.4252;stroke-linecap:round;stroke-linejoin:round;}
+	.st3{fill:none;stroke:#AAA9A9;stroke-width:0.4252;stroke-miterlimit:10;}
+	.st4{fill:url(#SVGID_2_);stroke:#231F20;stroke-width:0.4252;stroke-linecap:round;stroke-linejoin:round;}
 </style>
 <g>
 	<g>
-		<linearGradient id="SVGID_1_" gradientUnits="userSpaceOnUse" x1="14.4327" y1="10.089" x2="19.8089" y2="13.4031">
+		
+			<linearGradient id="SVGID_1_" gradientUnits="userSpaceOnUse" x1="14.4301" y1="13.9068" x2="19.8063" y2="10.5927" gradientTransform="matrix(1 0 0 -1 0 24)">
 			<stop  offset="0" style="stop-color:#D6CCBA"/>
 			<stop  offset="1" style="stop-color:#867C62"/>
 		</linearGradient>
@@ -21,6 +23,20 @@
 	<polygon class="st2" points="13.9,12.8 13.5,12.6 13.5,11.5 13.9,11.7 	"/>
 	<polygon class="st2" points="16.7,13.6 17.1,13.4 17.1,12.3 16.7,12.5 	"/>
 	<polygon class="st2" points="19.1,13.3 19.9,12.8 19.9,10.8 19.1,11.3 	"/>
+	<g>
+		<line class="st3" x1="11.9" y1="17.1" x2="11.9" y2="14.2"/>
+		<line class="st3" x1="8.2" y1="15" x2="8.2" y2="12.1"/>
+		<line class="st3" x1="4.4" y1="13" x2="4.4" y2="10.1"/>
+		<line class="st3" x1="0.8" y1="10.9" x2="0.8" y2="8"/>
+		<line class="st3" x1="4.5" y1="8.9" x2="4.5" y2="6.1"/>
+		<line class="st3" x1="7.9" y1="7.4" x2="7.9" y2="4.5"/>
+		<line class="st3" x1="10.8" y1="6.1" x2="10.8" y2="3.2"/>
+		<line class="st3" x1="14.5" y1="7.9" x2="14.5" y2="5"/>
+		<polyline class="st3" points="17.1,8 10.8,4.6 0.8,9.7 11.9,15.9 15.6,13.8 		"/>
+		<polyline class="st3" points="17.4,7.4 10.8,3.8 0.8,9.1 11.9,15.2 15.7,13 		"/>
+		<line class="st3" x1="17.5" y1="6.7" x2="17.5" y2="7.3"/>
+		<polyline class="st3" points="15.6,14.4 11.9,16.5 0.8,10.3 10.8,5.2 16.4,8.3 		"/>
+	</g>
 	<g>
 		<line class="st1" x1="11.9" y1="17.5" x2="11.9" y2="14.6"/>
 		<line class="st1" x1="8.2" y1="15.4" x2="8.2" y2="12.5"/>
@@ -35,10 +51,11 @@
 		<line class="st1" x1="17.5" y1="7.1" x2="17.5" y2="7.7"/>
 		<polyline class="st1" points="15.6,14.8 11.9,16.9 0.8,10.7 10.8,5.6 16,8.5 		"/>
 	</g>
-	<linearGradient id="SVGID_2_" gradientUnits="userSpaceOnUse" x1="16.5104" y1="8.488" x2="18.5686" y2="11.0187">
+	
+		<linearGradient id="SVGID_2_" gradientUnits="userSpaceOnUse" x1="16.5204" y1="15.5201" x2="18.5786" y2="12.9894" gradientTransform="matrix(1 0 0 -1 0 24)">
 		<stop  offset="0" style="stop-color:#88B5F1"/>
 		<stop  offset="1" style="stop-color:#424A9D"/>
 	</linearGradient>
-	<polygon class="st3" points="13.7,9.8 15.4,12.3 21.2,9.3 19.3,6.7 	"/>
+	<polygon class="st4" points="13.7,9.8 15.4,12.3 21.2,9.3 19.3,6.7 	"/>
 </g>
 </svg>

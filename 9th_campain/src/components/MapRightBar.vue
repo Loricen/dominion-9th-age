@@ -1,12 +1,12 @@
 <script lang="ts">
 // Defined outside setup so Vue never tries to make them reactive
 const FACTIONS = Object.freeze([
-  { id: 'equitaine', label: 'Kingdom of Equitaine' },
-  { id: 'dread',     label: 'Dread Elves'          },
-  { id: 'dwarven',   label: 'Dwarven Holds'         },
-  { id: 'vermin',    label: 'Vermin Swarm'          },
-  { id: 'daemon',    label: 'Daemon Legions'        },
-  { id: 'sonnstahl', label: 'Empire of Sonnstahl'   },
+  { label: 'Wildwood Stalkers',     id: 'elves'     },
+  { label: 'Frogling Coasts',       id: 'froglings' },
+  { label: 'High dwarven kingdoms', id: 'dwarves'   },
+  { label: 'Goblin tribes',         id: 'goblins'   },
+  { label: 'Orc Marauders',         id: 'orcs'      },
+  { label: 'Carroburg Barony',      id: 'humans'    },
 ])
 
 const BORDER_COLORS = Object.freeze([
@@ -36,6 +36,11 @@ const props = defineProps<{
   isMovingArmy: boolean
   selectedArmy: import('@/composables/useMapIO').Army | null
   inspectedArmy?: import('@/composables/useMapIO').Army | null
+  cityTileProblem?: (faction: string, q: number, r: number) => string
+  canFoundCity?: boolean
+  canFoundFarm?: boolean
+  foundCityHint?: string
+  foundFarmHint?: string
 }>()
 
 const emit = defineEmits<{
@@ -60,11 +65,20 @@ const selectedFaction  = ref(props.existingSetup?.faction   ?? '')
 const selectedColor    = ref<string>(props.existingSetup?.color ?? '#ffba00')
 const cityQ            = ref(props.existingSetup?.city_q    ?? null as number | null)
 const cityR            = ref(props.existingSetup?.city_r    ?? null as number | null)
-const randomUser_Id     = ref(props.existingSetup?.randomUserId    ?? null as number | null)
+const randomUser_Id    = ref(props.existingSetup?.randomUserId    ?? null as number | null)
 
-const inspectedOwnerSetup = computed(() =>
-  props.inspectedArmy ? props.allPlayerSetups.find(s => s.user_id === props.inspectedArmy!.user_id) ?? null : null
-)
+// A starting city is only valid for the faction it was picked with
+// (each faction has its own bonus terrain), so changing faction clears it.
+watch(selectedFaction, (nf, of) => {
+  if (of !== undefined && nf !== of) { cityQ.value = null; cityR.value = null }
+})
+
+// Owner of the unit being shown: an inspected enemy unit, else my selected unit,
+// else me (e.g. the setup-locked panel) — so the faction is never "Unknown".
+const inspectedOwnerSetup = computed(() => {
+  const ownerId = props.inspectedArmy?.user_id ?? props.selectedArmy?.user_id ?? props.existingSetup?.user_id
+  return ownerId != null ? props.allPlayerSetups.find(s => s.user_id === ownerId) ?? props.existingSetup ?? null : null
+})
 const inspectedFactionLabel = computed(() =>
   FACTIONS.find(f => f.id === inspectedOwnerSetup.value?.faction)?.label ?? inspectedOwnerSetup.value?.faction ?? 'Unknown'
 )
@@ -93,17 +107,46 @@ const armyOnCity     = computed(() =>
 )
 const isSettlerSelected = computed(() => props.selectedArmy?.unit_type === 'settler')
 const isFarmerSelected  = computed(() => props.selectedArmy?.unit_type === 'farmer')
-const canFoundFarmHere  = computed(() =>
-  props.isMovingArmy && isFarmerSelected.value && props.selectedArmy != null &&
-  !(props.buildings ?? []).some(b => b.q === props.selectedArmy!.q && b.r === props.selectedArmy!.r)
-)
-const canFoundCityHere  = computed(() =>
-  props.isMovingArmy && isSettlerSelected.value && props.selectedArmy != null &&
-  !(props.buildings ?? []).some(b => b.q === props.selectedArmy!.q && b.r === props.selectedArmy!.r)
-)
+const canFoundFarmHere  = computed(() => props.isMovingArmy && isFarmerSelected.value && !!props.canFoundFarm)
+const canFoundCityHere  = computed(() => props.isMovingArmy && isSettlerSelected.value && !!props.canFoundCity)
 const upgradePowerGain = computed(() => Math.floor(upgradeAmount.value / 10))
 const upgradeMaxAmount = computed(() => Math.floor(myResources.value / 10) * 10)
 const actionsMax = 10
+
+// Number of players who have already picked each faction (including me)
+const factionCounts = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {}
+  for (const st of props.allPlayerSetups) {
+    if (st.faction) counts[st.faction] = (counts[st.faction] ?? 0) + 1
+  }
+  return counts
+})
+
+// ── Enemy-city proximity warning while picking the starting city ────────
+const ENEMY_CITY_WARN_RANGE = 10
+function offsetToCube(q: number, r: number): [number, number, number] {
+  const z = r - (q - (q & 1)) / 2
+  return [q, -q - z, z]
+}
+function hexDistance(q1: number, r1: number, q2: number, r2: number): number {
+  const [x1, y1, z1] = offsetToCube(q1, r1)
+  const [x2, y2, z2] = offsetToCube(q2, r2)
+  return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2))
+}
+// Candidate = hex currently highlighted while picking, else the saved/picked city
+const candidateCity = computed<{ q: number; r: number } | null>(() => {
+  if (props.isSelectingCity) return props.selectedHex
+  return cityQ.value !== null && cityR.value !== null ? { q: cityQ.value, r: cityR.value } : null
+})
+const enemyCityNearby = computed(() => {
+  const c = candidateCity.value
+  if (!c) return false
+  return props.allPlayerSetups.some(st =>
+    st.user_id !== props.existingSetup?.user_id &&
+    st.city_q != null && st.city_r != null &&
+    hexDistance(c.q, c.r, st.city_q, st.city_r) <= ENEMY_CITY_WARN_RANGE
+  )
+})
 
 const takenColors = computed(() =>
   props.allPlayerSetups
@@ -114,11 +157,19 @@ const takenColors = computed(() =>
 const canSave = computed(() =>
   selectedFaction.value !== '' &&
   cityQ.value !== null &&
-  cityR.value !== null
+  cityR.value !== null &&
+  (!props.cityTileProblem || props.cityTileProblem(selectedFaction.value, cityQ.value, cityR.value) === '')
+)
+
+// Reason why the hex currently highlighted can't be the starting city ('' = OK)
+const selectedHexProblem = computed(() =>
+  props.selectedHex && props.cityTileProblem
+    ? props.cityTileProblem(selectedFaction.value, props.selectedHex.q, props.selectedHex.r)
+    : ''
 )
 
 function confirmCity() {
-  if (!props.selectedHex) return
+  if (!props.selectedHex || selectedHexProblem.value) return
   cityQ.value = props.selectedHex.q
   cityR.value = props.selectedHex.r
   emit('cancelCitySelect')
@@ -146,8 +197,12 @@ function save() {
       <div v-if="selectedHex" class="city-preview">
         Hover: ({{ selectedHex.q }}, {{ selectedHex.r }})
       </div>
+      <div v-if="selectedHexProblem" class="enemy-near-popin">⛔ {{ selectedHexProblem }}</div>
+      <div v-if="enemyCityNearby" class="enemy-near-popin">
+        ⚠️ An enemy city is within {{ ENEMY_CITY_WARN_RANGE }} tiles of this location.
+      </div>
       <div class="city-select-actions">
-        <button class="btn-confirm" :disabled="!selectedHex" @click="confirmCity">✓ Confirm</button>
+        <button class="btn-confirm" :disabled="!selectedHex || !!selectedHexProblem" @click="confirmCity">✓ Confirm</button>
         <button class="btn-cancel" @click="emit('cancelCitySelect')">✕ Cancel</button>
       </div>
     </div>
@@ -157,7 +212,8 @@ function save() {
       <div class="rightbar-title">🔎 Enemy Unit Spotted</div>
       <div class="rb-section">
         <div class="rb-label">Faction</div>
-        <div class="setup-value" :style="{ color: inspectedOwnerSetup?.color }">{{ inspectedFactionLabel }}</div>
+        <div class="setup-value" :style="{ color: inspectedOwnerSetup?.color }">
+            <img :src="`/src/assets/img/${inspectedOwnerSetup?.faction}.svg`" :alt="inspectedFactionLabel" class="faction-icon" />{{ inspectedFactionLabel }}</div>
       </div>
       <div class="rb-section">
         <div class="rb-label">Unit</div>
@@ -180,7 +236,8 @@ function save() {
       <!-- Faction -->
       <div class="rb-section">
         <div class="rb-label">Faction</div>
-        <div class="setup-value">{{ FACTIONS.find(f => f.id === existingSetup?.faction)?.label ?? existingSetup?.faction ?? '—' }}</div>
+        <div class="setup-value" :style="{ color: inspectedOwnerSetup?.color }">
+            <img :src="`/src/assets/img/${selectedFaction}.svg`" :alt="inspectedFactionLabel" class="faction-icon" />{{ inspectedFactionLabel }}</div>
       </div>
 
       <!-- Army name + rename -->
@@ -243,12 +300,10 @@ function save() {
       <!-- Found Farm (farmers only) -->
       <div v-if="isFarmerSelected" class="rb-section">
         <div class="rb-label">Farmer</div>
-        <div class="setup-value" style="margin-bottom: 6px">🌾 Can build a farm on one of your resource-bonus tiles (doubles its output).</div>
         <button
           class="btn-claim"
-          :class="{ active: canFoundFarmHere }"
           :disabled="!canFoundFarmHere"
-          :title="canFoundFarmHere ? 'Build a farm here' : 'A building already exists on this tile'"
+          :title="canFoundFarmHere ? 'Build a farm here' : (foundFarmHint || 'Cannot build a farm here')"
           @click="emit('foundFarm', selectedArmy.id)"
         >
           🌾 Build Farm
@@ -258,12 +313,10 @@ function save() {
       <!-- Found City (settlers only) -->
       <div v-if="isSettlerSelected" class="rb-section">
         <div class="rb-label">Settler</div>
-        <div class="setup-value" style="margin-bottom: 6px">🏗️ Can found a new city on a qualifying resource tile.</div>
         <button
           class="btn-claim"
-          :class="{ active: canFoundCityHere }"
           :disabled="!canFoundCityHere"
-          :title="canFoundCityHere ? 'Found a city here' : 'A city already exists on this tile'"
+          :title="canFoundCityHere ? 'Found a city here' : (foundCityHint || 'Cannot found a city here')"
           @click="emit('foundCity', selectedArmy.id)"
         >
           🏛️ Found City
@@ -288,22 +341,20 @@ function save() {
     </template>
 
     <template v-else-if="setupLocked || isLocked">
-      <div class="rightbar-title">⚔️ My Setup</div>
       <div v-if="existingSetup" class="rb-section">
         <div class="rb-label">Faction</div>
         <div class="color-preview">
-          <span class="color-sample" :style="{ background: existingSetup.color }"> <span class="color-hex">{{ existingSetup.color }}</span></span>
+          <span class="color-sample" :style="{ color: existingSetup.color }">
+            <img :src="`/src/assets/img/${selectedFaction}.svg`" :alt="inspectedFactionLabel" class="faction-icon" />
+            <span class="setup-value">{{ FACTIONS.find(f => f.id === existingSetup?.faction)?.label ?? existingSetup?.faction }}</span></span>
         </div>
-        <div class="setup-value">{{ FACTIONS.find(f => f.id === existingSetup?.faction)?.label ?? existingSetup?.faction }}</div>
+        
       </div>
       <!-- Actions gauge -->
       <div class="rb-section">
         <div class="rb-label">Actions <span class="actions-count">{{ myActions }} / {{ actionsMax }}</span></div>
         <div class="actions-gauge">
-          <div
-            class="actions-fill"
-            :style="{ width: (myActions / actionsMax * 100) + '%', background: myActions > 3 ? '#4adf8a' : myActions > 0 ? '#ffba00' : '#df4a4a' }"
-          />
+          <div class="actions-fill" :style="{ width: (myActions / actionsMax * 100) + '%', background: myActions > 3 ? '#4adf8a' : myActions > 0 ? '#ffba00' : '#df4a4a' }" />
         </div>
         <button
           class="btn-claim"
@@ -381,6 +432,11 @@ function save() {
           >
             <img :src="`/src/assets/img/${f.id}.svg`" :alt="f.label" class="faction-icon" />
             <span class="faction-name">{{ f.label }}</span>
+            <span
+              class="faction-count"
+              :class="{ 'faction-count--zero': !factionCounts[f.id] }"
+              :title="`${factionCounts[f.id] ?? 0} player(s) chose this faction`"
+            >{{ factionCounts[f.id] ?? 0 }}</span>
           </button>
         </div>
       </div>
@@ -401,7 +457,7 @@ function save() {
           />
         </div>
         <div class="color-preview">
-          <span class="color-sample" :style="{ background: selectedColor }" />
+          <span class="color-sample"><span :style="{ background: selectedColor }"></span> <span class="color-hex">{{ selectedColor }}</span></span>
           <span class="color-hex">{{ selectedColor }}</span>
         </div>
       </div>
@@ -413,17 +469,21 @@ function save() {
           <span class="city-coords" :class="{ set: cityQ !== null }">
             {{ cityQ !== null ? `🏰 ${cityLabel}` : '— not set' }}
           </span>
-          <button class="btn-pick-city" @click="emit('startCitySelect')">
+          <button class="btn-pick-city" :disabled="!selectedFaction" :title="selectedFaction ? '' : 'Choose a faction first'" @click="emit('startCitySelect')">
             {{ cityQ !== null ? '✏️ Change' : '📍 Pick' }}
           </button>
         </div>
+      </div>
+
+      <div v-if="enemyCityNearby && cityQ !== null" class="enemy-near-popin">
+        ⚠️ An enemy city is within {{ ENEMY_CITY_WARN_RANGE }} tiles of your starting city.
       </div>
 
       <!-- Save -->
       <button class="btn-save-setup" :disabled="!canSave" @click="save">
         {{ existingSetup ? '💾 Update Setup' : '💾 Save Setup' }}
       </button>
-      <p v-if="!canSave" class="rb-hint">Select a faction and a starting city to save.</p>
+      <p v-if="!canSave" class="rb-hint">Select a faction, then a starting city on its bonus terrain, to save.</p>
 
     </template>
   

@@ -425,6 +425,19 @@ function hexcommand_save_setup(WP_REST_Request $request): WP_REST_Response {
         return new WP_REST_Response(['error' => 'Missing setup fields'], 400);
     }
 
+    // The starting city must sit on a land tile granting the faction's resource bonus
+    $hexmap_data = json_decode(get_field('hexmap_data', $post_id), true) ?: [];
+    $hex_terrain = [];
+    foreach ($hexmap_data as $hex) {
+        $hex_terrain[$hex['q'] . ',' . $hex['r']] = $hex['terrain'] ?? '';
+    }
+    if (($hex_terrain[$city_q . ',' . $city_r] ?? 'water') === 'water') {
+        return new WP_REST_Response(['error' => 'The starting city must be on a land tile'], 409);
+    }
+    if (!hexcommand_faction_bonus_tile($faction, $city_q, $city_r, $hex_terrain)) {
+        return new WP_REST_Response(['error' => 'The starting city must be on a tile granting your faction\'s resource bonus'], 409);
+    }
+
     $setups = hexcommand_get_json_field($post_id, 'player_setups') ?: [];
     // Index by user_id (stored as string key in JSON)
     $setups_map = [];

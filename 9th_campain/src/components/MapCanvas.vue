@@ -43,12 +43,27 @@ function isSelected(q: number, r: number): boolean {
 
 // Memoized ownership lookup — O(1) per tile instead of scanning playerSetups/ownedTiles
 // arrays on every call. Rebuilt only when playerSetups or ownedTiles actually change.
+// While players are still joining / picking their starting city (map not
+// started yet), other players' cities and territory must stay hidden.
+const hideOtherPlayers = computed(() =>
+  props.currentUserId != null &&
+  !!props.mapStatus &&
+  props.mapStatus !== 'started' &&
+  props.mapStatus !== 'ended'
+)
+
+function isHiddenFromMe(userId: number): boolean {
+  return hideOtherPlayers.value && userId !== props.currentUserId
+}
+
 const ownerIdMap = computed<Map<string, number>>(() => {
   const map = new Map<string, number>()
-  for (const t of (props.ownedTiles ?? [])) map.set(`${t.q},${t.r}`, t.user_id)
+  for (const t of (props.ownedTiles ?? [])) {
+    if (!isHiddenFromMe(t.user_id)) map.set(`${t.q},${t.r}`, t.user_id)
+  }
   // Buildings (cities) always win, even if not separately listed in ownedTiles
   for (const b of (props.buildings ?? [])) {
-    if (b.q != null && b.r != null) map.set(`${b.q},${b.r}`, b.user_id)
+    if (b.q != null && b.r != null && !isHiddenFromMe(b.user_id)) map.set(`${b.q},${b.r}`, b.user_id)
   }
   return map
 })
@@ -136,12 +151,27 @@ function canSeeEnemyUnit(q: number, r: number): boolean {
 
 // Visibility rule for a unit marker:
 // - your own units are always visible
-// - any enemy unit (army, spy or settler) is only spotted within SPY_SIGHT_RADIUS
-//   of one of your own spies — general territory/fog vision is not enough
+// - enemy spies stay hidden unless one of your own spies is within sight range
+// - every other enemy unit (army, settler, farmer) is visible as soon as its
+//   tile is out of the fog of war
 function isUnitVisible(unit: Army): boolean {
   if (unit.q == null || unit.r == null) return false
   if (unit.user_id === props.currentUserId) return true
+  if (unit.unit_type === 'spy') return canSeeEnemyUnit(unit.q, unit.r)
+  return !isFogged(unit.q, unit.r)
+}
+
+// An enemy unit can only be selected/inspected when it is within sight range
+// of one of your own spies (seeing it on the map is not enough).
+function isUnitSelectable(unit: Army): boolean {
+  if (unit.q == null || unit.r == null) return false
+  if (unit.user_id === props.currentUserId) return true
   return canSeeEnemyUnit(unit.q, unit.r)
+}
+
+function onUnitClick(unit: Army) {
+  if (!isUnitSelectable(unit)) return
+  emit('clickArmy', { armyId: unit.id })
 }
 
 // Memoized per-tile fog state: computed ONCE per hexes/ownedTiles/playerSetups change,
@@ -198,7 +228,7 @@ const enemyArmyPositions = computed<Set<string>>(() => {
     : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
   const adjacent = new Set(offsets.map(([dq, dr]) => `${army.q + dq},${army.r + dr}`))
   for (const a of (props.armies ?? [])) {
-    if (a.user_id !== army.user_id && adjacent.has(`${a.q},${a.r}`)) {
+    if (a.user_id !== army.user_id && adjacent.has(`${a.q},${a.r}`) && isUnitVisible(a)) {
       result.add(`${a.q},${a.r}`)
     }
   }
@@ -494,7 +524,7 @@ function buildingColor(e: Building): string {
 
         <!-- Building (city) markers -->
         <g v-for="building in (buildings ?? [])" :key="`building-${building.id}`">
-          <template v-if="building.q != null && building.r != null && (building.user_id === currentUserId || !isFogged(building.q, building.r))">
+          <template v-if="building.q != null && building.r != null && !isHiddenFromMe(building.user_id) && (building.user_id === currentUserId || !isFogged(building.q, building.r))">
             <image
               :x="hexCenter(building.q, building.r)[0] - 8.5"
               :y="hexCenter(building.q, building.r)[1] - 6.5"
@@ -512,7 +542,7 @@ function buildingColor(e: Building): string {
             <circle
               v-if="selectedArmyId === army.id"
               :cx="hexCenter(army.q!, army.r!)[0] + 4"
-              :cy="hexCenter(army.q!, army.r!)[1] - 3"
+              :cy="hexCenter(army.q!, army.r!)[1] - 2"
               r="7"
               fill="none"
               stroke="#00e5ff"
@@ -525,10 +555,10 @@ function buildingColor(e: Building): string {
               :y="hexCenter(army.q!, army.r!)[1]-7"
               width="10"
               height="10"
-              :href="army.unit_type === 'spy' ? '/src/assets/img/spy-'+UnitColor(army).replace('#','')+'.svg' : (army.unit_type === 'settler'|| army.unit_type ==='farmer') ? '/src/assets/img/settler-'+UnitColor(army).replace('#','')+'.svg' : '/src/assets/img/army-'+UnitColor(army).replace('#','')+'.svg'"
+              :href="army.unit_type === 'spy' ? '/src/assets/img/units/spy-'+UnitColor(army).replace('#','')+'.svg' : (army.unit_type === 'settler'|| army.unit_type ==='farmer') ? '/src/assets/img/units/settler-'+UnitColor(army).replace('#','')+'.svg' : '/src/assets/img/units/army-'+UnitColor(army).replace('#','')+'.svg'"
               :opacity="(army.unit_type === 'spy' || army.unit_type === 'settler' || army.unit_type === 'farmer') && army.user_id === currentUserId ? 0.85 : 1"
-              style="user-select: none; cursor: pointer"
-              @click.stop="emit('clickArmy', { armyId: army.id })" />
+              :style="`user-select: none; cursor: pointer; pointer-events: ${isUnitSelectable(army) ? 'auto' : 'none'}`"
+              @click.stop="onUnitClick(army)" />
             <!-- Player colour ring -->
             <circle
               :cx="hexCenter(army.q!, army.r!)[0] + 4"
@@ -537,7 +567,7 @@ function buildingColor(e: Building): string {
               fill="none"
               :stroke="UnitColor(army)"
               stroke-width="1"
-              style="pointer-events: none"
+              style="pointer-events: none; opacity: 0.7;"
             />
           </template>
         </g>

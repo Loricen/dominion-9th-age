@@ -20,7 +20,7 @@ require_once plugin_dir_path(__FILE__) . 'includes/game-mechanics.php';
 // NEW USER REGISTRATION — grant 10 starter credits
 // ============================================================
 add_action('user_register', function (int $user_id): void {
-    update_field('credits', 10, 'user_' . $user_id);
+    update_field('credits', 1000, 'user_' . $user_id);
 });
 
 // ============================================================
@@ -244,12 +244,12 @@ function hexcommand_tile_is_own_city(int $post_id, int $user_id, int $q, int $r)
 // lives in one place.
 function hexcommand_faction_bonus_tile(string $faction, int $q, int $r, array $hex_terrain): bool {
     $terrain_here = $hex_terrain[$q . ',' . $r] ?? '';
-    if ($faction === 'equitaine') return $terrain_here === 'forest';
-    if ($faction === 'dwarven')   return $terrain_here === 'mountain';
-    if ($faction === 'vermin')    return $terrain_here === 'swamp';
-    if ($faction === 'daemon')    return $terrain_here === 'desert';
-    if ($faction === 'sonnstahl') return $terrain_here === 'plains';
-    if ($faction === 'dread') {
+    if ($faction === 'elves') return $terrain_here === 'forest';
+    if ($faction === 'dwarves')   return $terrain_here === 'mountain';
+    if ($faction === 'goblins')    return $terrain_here === 'swamp';
+    if ($faction === 'orcs')    return $terrain_here === 'desert';
+    if ($faction === 'humans') return $terrain_here === 'plains';
+    if ($faction === 'froglings') {
         $offsets = $q % 2 === 0
             ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
             : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]];

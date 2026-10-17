@@ -214,6 +214,63 @@ const mySetup = computed(() => {
 })
 const playerBorderColor = ref<string | null>(null)
 
+// ── Settler / farmer build conditions (mirror the server rules) ─────────────
+const selectedUnit = computed(() =>
+  selectedArmyId.value != null ? armies.value.find(a => a.id === selectedArmyId.value) ?? null : null
+)
+
+function isFactionBonusTile(faction: string, q: number, r: number): boolean {
+  q = Number(q); r = Number(r)
+  const terrainAt = (tq: number, tr: number) => hexes.value.find(h => Number(h.q) === tq && Number(h.r) === tr)?.terrain ?? ''
+  faction = String(faction ?? '').trim().toLowerCase()
+  const here = terrainAt(q, r)
+  if (faction === 'elves')     return here === 'forest'
+  if (faction === 'dwarves')   return here === 'mountain'
+  if (faction === 'goblins')   return here === 'swamp'
+  if (faction === 'orcs')      return here === 'desert'
+  if (faction === 'humans')    return here === 'plains'
+  if (faction === 'froglings') {
+    const offsets: [number, number][] = q % 2 === 0
+      ? [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1]]
+      : [[1,0],[-1,0],[0,-1],[0,1],[1,1],[-1,1]]
+    return offsets.some(([dq, dr]) => terrainAt(q + dq, r + dr) === 'water')
+  }
+  return false
+}
+
+const FACTION_BONUS_LABEL: Record<string, string> = {
+  elves: 'forest', dwarves: 'mountain', goblins: 'swamp', orcs: 'desert', humans: 'plains',
+  froglings: 'a tile next to water',
+}
+
+// '' when (q,r) is a valid starting-city tile for the faction, else the reason why not
+function cityTileProblem(faction: string, q: number, r: number): string {
+  if (!faction) return 'Choose a faction first'
+  const hex = hexes.value.find(h => Number(h.q) === Number(q) && Number(h.r) === Number(r))
+  if (!hex) return 'Invalid tile'
+  if (hex.terrain === 'water') return 'You cannot settle on water'
+  if (!isFactionBonusTile(faction, q, r)) {
+    return `Your starting city must be on ${FACTION_BONUS_LABEL[faction] ?? 'a faction bonus tile'} (your faction's resource bonus)`
+  }
+  return ''
+}
+
+// Returns '' when the selected unit may build here, otherwise the reason why not
+const foundBlockReason = computed<{ city: string; farm: string }>(() => {
+  const u = selectedUnit.value
+  const setup = mySetup.value
+  const none = { city: '', farm: '' }
+  if (!u || !setup || u.q == null || u.r == null) return { city: 'No unit selected', farm: 'No unit selected' }
+  const common =
+    (setup.actions ?? 0) <= 0 ? 'No actions remaining'
+    : buildings.value.some(b => b.q === u.q && b.r === u.r) ? 'A building already exists on this tile'
+    : !isFactionBonusTile(setup.faction, u.q, u.r) ? "This tile does not grant your faction's resource bonus"
+    : ''
+  if (common) return { city: common, farm: common }
+  const owns = ownedTiles.value.some(t => t.q === u.q && t.r === u.r && t.user_id === currentUserId.value)
+  return { ...none, farm: owns ? '' : 'You must own this tile to build a farm on it' }
+})
+
 // --- Handlers ---
 async function handleLoadImage(file: File) {
   try {
@@ -709,6 +766,11 @@ onUnmounted(() => {
         :is-moving-army="isMovingArmy"
         :selected-army="isMovingArmy && selectedArmyId ? armies.find(a => a.id === selectedArmyId) ?? null : null"
         :inspected-army="inspectedArmy"
+        :city-tile-problem="cityTileProblem"
+        :can-found-city="foundBlockReason.city === ''"
+        :can-found-farm="foundBlockReason.farm === ''"
+        :found-city-hint="foundBlockReason.city"
+        :found-farm-hint="foundBlockReason.farm"
         @rename-army="(id, name) => loadedMapStatus && renameArmy(loadedMapStatus.uid, id, name)"
         @upgrade-army="(id: number, res: number) => loadedMapStatus && upgradeArmy(loadedMapStatus.uid, id, res).catch((e: Error) => showMsg(e.message))"
         @found-city="(id: number) => handleFoundCity(id)"
